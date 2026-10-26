@@ -1,4 +1,5 @@
 import type { CanvasElement } from './canvas-types';
+import { percentValue } from './numbers.ts';
 
 export type ManufacturingMode = 'unitario' | 'lote';
 
@@ -32,7 +33,7 @@ export function batchSettings(element: Pick<CanvasElement, 'data'>): BatchSettin
   const rawTransfer = Math.round(Number(data.loteTransf) || batchSize);
   const transferBatch = mode === 'lote' ? Math.min(batchSize, Math.max(1, rawTransfer)) : 1;
   const resources = Math.max(1, Number(data.recurso) || 1);
-  const availability = Math.min(100, Math.max(1, Number(data.disp) || 100)) / 100;
+  const availability = Math.min(100, Math.max(1, percentValue(data.disp))) / 100;
   const cycleTime = Math.max(0, Number(data.tc) || 0);
   return {
     mode,

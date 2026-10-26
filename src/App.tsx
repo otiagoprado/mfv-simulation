@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Activity, AlertTriangle, BarChart3, BookOpen, Calculator, CheckCircle2, Copy, Download, FileImage, FileText, GitCompareArrows,
-  ChevronDown, ImageDown, LayoutTemplate, Loader2, Map, Menu as MenuIcon, Palette, Pencil, Plus,
-  Pause, Play, RotateCcw, Route, Search, Sparkles, Square, Trash2, X, ZoomIn, ZoomOut, Minus,
+  ChevronDown, FolderOpen, ImageDown, LayoutTemplate, Loader2, Map, Menu as MenuIcon, Palette, Pencil, Plus,
+  Pause, Play, RotateCcw, Route, Save, Search, Sparkles, Square, Trash2, X, ZoomIn, ZoomOut, Minus,
 } from 'lucide-react';
 import {
   ARROW_KINDS, DEFAULT_TRUCK_COLOR, LIBRARY, makeId,
@@ -24,6 +24,7 @@ import { exportJPEG, exportPDF, exportSVG, type PaperSize } from './export';
 import { cloneCanvas, syncCanvasForward } from './canvas-sync';
 import { runStressTest, type StressTestSettings } from './stress-test';
 import { batchLeadTime, batchSettings } from './batch';
+import { percentValue } from './numbers';
 import type { Scenario } from './types';
 import truckThreeQuarter from './assets/truck-three-quarter.png';
 
@@ -205,7 +206,7 @@ function calculateProcessLoad(element: CanvasElement, dailyDemand: number, cumul
   const setupPerUnit = (Math.max(0, Number(element.data.setup) || 0) * 60)
     / Math.max(1, Number(element.data.lote) || 1);
   const resources = Math.max(1, Number(element.data.recurso) || 1);
-  const availability = Math.min(100, Math.max(1, Number(element.data.disp) || 100)) / 100;
+  const availability = Math.min(100, Math.max(1, percentValue(element.data.disp))) / 100;
   const effectiveCycleSec = (cycleTime + setupPerUnit) / (resources * availability);
   const rawCapacityPerDay = effectiveCycleSec > 0
     ? (availableMinutesPerDay * 60) / effectiveCycleSec
@@ -267,7 +268,7 @@ function calculateCanvasSimulation(canvas: CanvasState) {
     .sort((a, b) => a.x - b.x);
   let cumulativeYield = 1;
   const processMetrics = [...processElements].reverse().map((element) => {
-    const quality = Math.min(100, Math.max(0.1, Number(element.data.qualidade) || 100)) / 100;
+    const quality = Math.min(100, Math.max(0.1, percentValue(element.data.qualidade))) / 100;
     cumulativeYield *= quality;
     const batch = batchSettings(element);
     return {
@@ -296,7 +297,7 @@ function calculateCanvasSimulation(canvas: CanvasState) {
   const pacemakerSetupSec = Math.max(0, Number(linkedPacemaker?.data.setup) || 0) * 60;
   const availableSeconds = canvas.assumptions.availableMinutesPerDay * 60;
   const pacemakerResources = Math.max(1, Number(linkedPacemaker?.data.recurso) || 1);
-  const pacemakerAvailability = Math.min(100, Math.max(1, Number(linkedPacemaker?.data.disp) || 100)) / 100;
+  const pacemakerAvailability = Math.min(100, Math.max(1, percentValue(linkedPacemaker?.data.disp))) / 100;
   const pacemakerRunSecPerDay = linkedPacemaker
     ? (Math.max(0, Number(linkedPacemaker.data.tc) || 0) / (pacemakerResources * pacemakerAvailability)) * dailyDemand
     : 0;
@@ -973,8 +974,25 @@ function createFixedIdentification(planning: CanvasElement): CanvasElement {
   };
 }
 
+function isCanvasElement(value: unknown): value is CanvasElement {
+  const element = value as Partial<CanvasElement> | null;
+  return typeof element === 'object' && element !== null
+    && typeof element.id === 'string' && typeof element.kind === 'string'
+    && Number.isFinite(element.x) && Number.isFinite(element.y)
+    && typeof element.data === 'object' && element.data !== null;
+}
+
+function isCanvasArrow(value: unknown): value is CanvasArrow {
+  const arrow = value as Partial<CanvasArrow> | null;
+  return typeof arrow === 'object' && arrow !== null
+    && typeof arrow.id === 'string' && typeof arrow.kind === 'string'
+    && [arrow.x1, arrow.y1, arrow.x2, arrow.y2].every(Number.isFinite);
+}
+
 function normalizeCanvas(raw: Partial<CanvasState> | undefined, legacy?: Partial<Scenario>, resetThemeLinkedTrucks = false): CanvasState {
-  const elements = Array.isArray(raw?.elements) ? raw.elements : [];
+  const elements = (Array.isArray(raw?.elements) ? raw.elements : [])
+    .filter(isCanvasElement)
+    .map((element) => typeof element.label === 'string' ? element : { ...(element as CanvasElement), label: '' });
   const existingPlanning = elements.find((element) => element.id === FIXED_PLANNING_ID)
     ?? elements.find((element) => element.kind === 'planning');
   const legacyDemand = positiveNumber(raw?.assumptions?.monthlyDemand ?? legacy?.monthlyDemand ?? existingPlanning?.data.demanda, DEFAULT_ASSUMPTIONS.monthlyDemand);
@@ -1018,7 +1036,7 @@ function normalizeCanvas(raw: Partial<CanvasState> | undefined, legacy?: Partial
           return shouldRestoreDefault ? { ...element, data: { ...element.data, color: defaultColor } } : element;
         }),
     ],
-    arrows: Array.isArray(raw?.arrows) ? raw.arrows : [],
+    arrows: Array.isArray(raw?.arrows) ? raw.arrows.filter(isCanvasArrow) : [],
     assumptions,
     themeColor,
   };
@@ -1089,6 +1107,59 @@ function createFutureVariant(current: CanvasState, name = 'Cenário base', id = 
   return { id, name, canvas: cloneCanvas(current) };
 }
 
+function normalizeWorkspace(
+  parsed: Partial<CanvasWorkspace>,
+  legacy?: { current?: Scenario; future?: Scenario },
+  resetThemeLinkedTrucks = false,
+): CanvasWorkspace {
+  const current = normalizeCanvas(parsed.current, legacy?.current, resetThemeLinkedTrucks);
+  const rawFutures = Array.isArray(parsed.futures)
+    ? parsed.futures.filter((variant): variant is FutureVariant => typeof variant === 'object' && variant !== null)
+    : [];
+  const futures = rawFutures.length
+    ? rawFutures.map((variant, index) => ({
+        id: typeof variant.id === 'string' && variant.id ? variant.id : `future-${makeId()}`,
+        name: typeof variant.name === 'string' && variant.name ? variant.name : `Cenário ${index + 1}`,
+        canvas: normalizeCanvas(variant.canvas, legacy?.future, resetThemeLinkedTrucks),
+      }))
+    : [createFutureVariant(current)];
+  return {
+    current,
+    futures,
+    activeFutureId: futures.some((variant) => variant.id === parsed.activeFutureId) ? String(parsed.activeFutureId) : futures[0].id,
+  };
+}
+
+/** Grava o workspace no navegador; devolve false quando o armazenamento está cheio ou bloqueado. */
+function persistWorkspace(workspace: CanvasWorkspace) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const PROJECT_FILE_FORMAT = 'mfv-simulation-project';
+
+function projectFileContents(workspace: CanvasWorkspace) {
+  return JSON.stringify({ format: PROJECT_FILE_FORMAT, version: 1, savedAt: new Date().toISOString(), workspace }, null, 2);
+}
+
+function parseProjectFile(text: string): CanvasWorkspace {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('O arquivo não é um JSON válido.');
+  }
+  const file = parsed as { format?: unknown; workspace?: Partial<CanvasWorkspace> } | null;
+  if (!file || file.format !== PROJECT_FILE_FORMAT || typeof file.workspace !== 'object' || file.workspace === null) {
+    throw new Error('Este arquivo não é um projeto do Simulador MFV.');
+  }
+  return normalizeWorkspace(file.workspace);
+}
+
 function loadWorkspace(): CanvasWorkspace {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -1097,30 +1168,10 @@ function loadWorkspace(): CanvasWorkspace {
     const oldestCanvasRaw = localStorage.getItem(OLDEST_STORAGE_KEY);
     const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
     const legacy = legacyRaw ? JSON.parse(legacyRaw) as { current?: Scenario; future?: Scenario } : undefined;
-    if (saved) {
-      const parsed = JSON.parse(saved) as Partial<CanvasWorkspace>;
-      const current = normalizeCanvas(parsed.current, legacy?.current);
-      const futures = Array.isArray(parsed.futures) && parsed.futures.length
-        ? parsed.futures.map((variant) => ({ ...variant, canvas: normalizeCanvas(variant.canvas, legacy?.future) }))
-        : [createFutureVariant(current)];
-      return {
-        current,
-        futures,
-        activeFutureId: futures.some((variant) => variant.id === parsed.activeFutureId) ? String(parsed.activeFutureId) : futures[0].id,
-      };
-    }
+    if (saved) return normalizeWorkspace(JSON.parse(saved) as Partial<CanvasWorkspace>, legacy);
     if (previousCanvasRaw) {
-      const parsed = JSON.parse(previousCanvasRaw) as Partial<CanvasWorkspace>;
-      const current = normalizeCanvas(parsed.current, legacy?.current, true);
-      const futures = Array.isArray(parsed.futures) && parsed.futures.length
-        ? parsed.futures.map((variant) => ({ ...variant, canvas: normalizeCanvas(variant.canvas, legacy?.future, true) }))
-        : [createFutureVariant(current)];
-      const result: CanvasWorkspace = {
-        current,
-        futures,
-        activeFutureId: futures.some((variant) => variant.id === parsed.activeFutureId) ? String(parsed.activeFutureId) : futures[0].id,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
+      const result = normalizeWorkspace(JSON.parse(previousCanvasRaw) as Partial<CanvasWorkspace>, legacy, true);
+      persistWorkspace(result);
       return result;
     }
     const priorRaw = olderCanvasRaw ?? oldestCanvasRaw;
@@ -1129,7 +1180,7 @@ function loadWorkspace(): CanvasWorkspace {
       const current = normalizeCanvas(parsed.current, legacy?.current, true);
       const future = parsed.future ? normalizeCanvas(parsed.future, legacy?.future, true) : cloneCanvas(current);
       const result: CanvasWorkspace = { current, futures: [{ id: 'future-base', name: 'Cenário base', canvas: future }], activeFutureId: 'future-base' };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
+      persistWorkspace(result);
       return result;
     }
     const current = normalizeCanvas(undefined, legacy?.current);
@@ -1152,13 +1203,13 @@ function canvasForPreset(current: CanvasState, preset: ScenarioPreset) {
     ? { ...element, data: { ...element.data, setup: Math.max(0, Number(element.data.setup) || 0) * 0.5 } }
     : element);
   if (preset === 'availability-up') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
-    ? { ...element, data: { ...element.data, disp: Math.min(100, (Number(element.data.disp) || 100) + 10) } }
+    ? { ...element, data: { ...element.data, disp: Math.min(100, percentValue(element.data.disp) + 10) } }
     : element);
   if (preset === 'one-piece-flow') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
     ? { ...element, data: { ...element.data, fabricacao: 'unitario' } }
     : element);
   if (preset === 'quality-up') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
-    ? { ...element, data: { ...element.data, qualidade: Math.min(100, (Number(element.data.qualidade) || 100) + 5) } }
+    ? { ...element, data: { ...element.data, qualidade: Math.min(100, percentValue(element.data.qualidade) + 5) } }
     : element);
   if (preset === 'bottleneck-resource') {
     const bottleneckId = calculateCanvasSimulation(next).bottleneck?.id;
@@ -1576,8 +1627,8 @@ function bottleneckGuidance(metric: ReturnType<typeof calculateCanvasSimulation>
   const setup = Math.max(0, Number(metric.element.data.setup) || 0);
   const lot = Math.max(1, Number(metric.element.data.lote) || 1);
   const setupPerUnitSec = setup * 60 / lot;
-  const availability = Math.min(100, Math.max(1, Number(metric.element.data.disp) || 100));
-  const quality = Math.min(100, Math.max(0.1, Number(metric.element.data.qualidade) || 100));
+  const availability = Math.min(100, Math.max(1, percentValue(metric.element.data.disp)));
+  const quality = Math.min(100, Math.max(0.1, percentValue(metric.element.data.qualidade)));
   const resources = Math.max(1, Number(metric.element.data.recurso) || 1);
   const setupShare = cycle + setupPerUnitSec > 0 ? setupPerUnitSec / (cycle + setupPerUnitSec) : 0;
   const load = Math.max(100, metric.loadPercent);
@@ -2341,7 +2392,7 @@ function ComparisonModal({ workspace, onSelect, onClose }: { workspace: CanvasWo
       .reduce((sum, element) => sum + Math.max(0, Number(element.data.qty) || 0), 0);
     const operators = result.processElements.reduce((sum, element) => sum + Math.max(0, Number(element.data.op) || 0), 0);
     const qualityYield = result.processElements.reduce((yieldRate, element) => {
-      const quality = Math.min(100, Math.max(0, Number(element.data.qualidade) || 100)) / 100;
+      const quality = Math.min(100, Math.max(0, percentValue(element.data.qualidade))) / 100;
       return yieldRate * quality;
     }, 1) * 100;
     const maxLoad = result.processMetrics.reduce((maximum, metric) => Math.max(maximum, metric.loadPercent), 0);
@@ -2592,7 +2643,6 @@ export default function App() {
             ...previous,
             futures: previous.futures.map((variant) => variant.id === previous.activeFutureId ? { ...variant, canvas: updated } : variant),
           };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
       workspaceRef.current = result;
       return result;
     });
@@ -2604,7 +2654,6 @@ export default function App() {
     undoStackRef.current = undoStackRef.current.slice(1);
     const restored = cloneWorkspace(previous);
     workspaceRef.current = restored;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(restored));
     setWorkspace(restored);
     setSelectedId(null);
     setEditingEl(null);
@@ -2630,7 +2679,12 @@ export default function App() {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [leanAssistantOpen, setLeanAssistantOpen] = useState(false);
   const [stressTestOpen, setStressTestOpen] = useState(false);
-  const [manualOpen, setManualOpen] = useState(() => localStorage.getItem(MANUAL_SEEN_KEY) !== 'true');
+  const [manualOpen, setManualOpen] = useState(() => {
+    try { return localStorage.getItem(MANUAL_SEEN_KEY) !== 'true'; } catch { return true; }
+  });
+  const [saveFailed, setSaveFailed] = useState(false);
+  const saveFailureNotifiedRef = useRef(false);
+  const projectFileInputRef = useRef<HTMLInputElement>(null);
   const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
   const [appliedLeanFixes, setAppliedLeanFixes] = useState<AppliedLeanFix[]>([]);
   const [leanUndoStack, setLeanUndoStack] = useState<CanvasState[]>([]);
@@ -2758,6 +2812,16 @@ export default function App() {
   };
 
   useEffect(() => {
+    const persisted = persistWorkspace(workspace);
+    setSaveFailed(!persisted);
+    if (persisted) saveFailureNotifiedRef.current = false;
+    else if (!saveFailureNotifiedRef.current) {
+      saveFailureNotifiedRef.current = true;
+      setAppDialog({
+        type: 'alert', title: 'Alterações não salvas',
+        message: 'O armazenamento do navegador está cheio ou bloqueado. Use “Salvar projeto (.json)” em Ferramentas do projeto para não perder o trabalho, e remova imagens ou cenários que não usa.',
+      });
+    }
     setSaved(false);
     const t = setTimeout(() => setSaved(true), 500);
     return () => clearTimeout(t);
@@ -3171,7 +3235,6 @@ export default function App() {
     setWorkspace((previous) => {
       if (!previous.futures.some((variant) => variant.id === id)) return previous;
       const next = { ...previous, activeFutureId: id };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       return next;
     });
     setActiveKind('future');
@@ -3185,7 +3248,6 @@ export default function App() {
         canvas: canvasForPreset(previous.current, preset),
       };
       const next = { ...previous, futures: [...previous.futures, variant], activeFutureId: variant.id };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       return next;
     });
     setActiveKind('future');
@@ -3197,7 +3259,6 @@ export default function App() {
       const source = previous.futures.find((variant) => variant.id === previous.activeFutureId) ?? previous.futures[0];
       const variant = { id: `future-${makeId()}`, name: `${source.name} — cópia`, canvas: cloneCanvas(source.canvas) };
       const next = { ...previous, futures: [...previous.futures, variant], activeFutureId: variant.id };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       return next;
     });
     setActiveKind('future');
@@ -3208,7 +3269,6 @@ export default function App() {
       type: 'prompt', title: 'Renomear cenário', message: 'Escolha um nome curto e claro para identificar esta simulação.', value: activeFuture.name, confirmLabel: 'Salvar nome',
       onConfirm: (value) => setWorkspace((previous) => {
         const next = { ...previous, futures: previous.futures.map((variant) => variant.id === previous.activeFutureId ? { ...variant, name: value?.trim() || variant.name } : variant) };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         return next;
       }),
     });
@@ -3224,7 +3284,6 @@ export default function App() {
       onConfirm: () => setWorkspace((previous) => {
         const futures = previous.futures.filter((variant) => variant.id !== previous.activeFutureId);
         const next = { ...previous, futures, activeFutureId: futures[0].id };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         return next;
       }),
     });
@@ -3261,8 +3320,41 @@ export default function App() {
     setLiveElapsedSec(0);
   };
   const closeManual = () => {
-    localStorage.setItem(MANUAL_SEEN_KEY, 'true');
+    try { localStorage.setItem(MANUAL_SEEN_KEY, 'true'); } catch { /* o manual volta a abrir na próxima visita */ }
     setManualOpen(false);
+  };
+
+  const exportProjectFile = () => {
+    const blob = new Blob([projectFileContents(workspaceRef.current)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `projeto-mfv-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importProjectFile = async (file?: File) => {
+    if (!file) return;
+    try {
+      const imported = parseProjectFile(await file.text());
+      setAppDialog({
+        type: 'confirm', title: 'Abrir projeto', destructive: true,
+        message: `O projeto “${file.name}” vai substituir o Estado atual e todos os cenários deste navegador. Você pode desfazer logo em seguida.`,
+        confirmLabel: 'Abrir projeto',
+        onConfirm: () => {
+          undoStackRef.current = [cloneWorkspace(workspaceRef.current), ...undoStackRef.current].slice(0, 80);
+          workspaceRef.current = imported;
+          setWorkspace(imported);
+          setActiveKind('current');
+          setSelectedId(null);
+          setEditingEl(null);
+          setEditingArrow(null);
+        },
+      });
+    } catch (error) {
+      setAppDialog({ type: 'alert', title: 'Não foi possível abrir', message: error instanceof Error ? error.message : 'Arquivo inválido.' });
+    }
   };
 
   return (
@@ -3306,10 +3398,14 @@ export default function App() {
           <div className="sidebar-bottom">
             <button className="sidebar-help-button" onClick={() => setManualOpen(true)} title="Abrir manual de uso"><BookOpen size={17} /><span>Manual de uso</span></button>
             <button className="sidebar-project-toggle" onClick={() => setProjectToolsOpen((value) => !value)} aria-expanded={projectToolsOpen}>
-              <span>Ferramentas do projeto</span><div className="save-state"><i/><span>{saved ? 'Salvo' : 'Salvando…'}</span></div><ChevronDown size={14}/>
+              <span>Ferramentas do projeto</span><div className={`save-state ${saveFailed ? 'error' : ''}`}><i/><span>{saveFailed ? 'Não salvo' : saved ? 'Salvo' : 'Salvando…'}</span></div><ChevronDown size={14}/>
             </button>
             {projectToolsOpen && <div className="sidebar-project-actions">
               <button onClick={applyExcelTemplate} title="Montar o fluxo padrão usado no Excel"><LayoutTemplate size={17} /><span>Modelo base do Excel</span></button>
+              <button onClick={exportProjectFile} title="Baixar o projeto completo para backup ou para enviar a outra pessoa"><Save size={17} /><span>Salvar projeto (.json)</span></button>
+              <button onClick={() => projectFileInputRef.current?.click()} title="Abrir um projeto salvo em arquivo"><FolderOpen size={17} /><span>Abrir projeto (.json)</span></button>
+              <input ref={projectFileInputRef} type="file" accept="application/json,.json" hidden
+                onChange={(event) => { void importProjectFile(event.target.files?.[0]); event.target.value = ''; }} />
               <button className="sidebar-export-button" onClick={() => { resetLiveSimulation(); setSelectedId(null); setExportOpen(true); }}><Download size={17} /><span>Imprimir e exportar</span></button>
               <button className="sidebar-clear-button" onClick={requestClearCanvas}>
                 <RotateCcw size={17} /><span>Limpar</span>

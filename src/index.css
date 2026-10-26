@@ -158,6 +158,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   display: flex; align-items: center; gap: 5px; color: #6e6e73; font-size: 7.5px;
 }
 .save-state i { width: 6px; height: 6px; background: #29a95f; border-radius: 50%; box-shadow: 0 0 0 3px rgba(41,169,95,.1); }
+.save-state.error { color: #c4271d; }
+.save-state.error i { background: #ff3b30; box-shadow: 0 0 0 3px rgba(255,59,48,.14); }
 .sidebar-bottom button {
   height: 40px; display: flex; align-items: center; gap: 9px; padding: 0 10px;
   color: #4b4b50; background: transparent; border: 0; border-radius: 9px;

@@ -1,5 +1,6 @@
 // Extensão explícita: os testes executam este arquivo direto no Node.
 import { batchSettings, type BatchSettings } from './batch.ts';
+import { percentValue } from './numbers.ts';
 import type { CanvasElement, ScenarioAssumptions } from './canvas-types';
 
 export interface StressTestSettings {
@@ -93,8 +94,8 @@ function prepareProcesses(elements: CanvasElement[]) {
     const setupPerUnitSec = (Math.max(0, Number(element.data.setup) || 0) * 60)
       / Math.max(1, Number(element.data.lote) || 1);
     const resources = Math.max(1, Number(element.data.recurso) || 1);
-    const availability = clamp(Number(element.data.disp) || 100, 1, 100) / 100;
-    const quality = clamp(Number(element.data.qualidade) || 100, 0.1, 100) / 100;
+    const availability = clamp(percentValue(element.data.disp), 1, 100) / 100;
+    const quality = clamp(percentValue(element.data.qualidade), 0.1, 100) / 100;
     const effectiveCycleSec = cycleTime > 0 ? (cycleTime + setupPerUnitSec) / (resources * availability) : 0;
     const next = rawProcesses[index + 1];
     const processEnd = element.x + elementWidth(element);
