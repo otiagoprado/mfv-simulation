@@ -1,3 +1,5 @@
+// Extensão explícita: os testes executam este arquivo direto no Node.
+import { batchSettings, type BatchSettings } from './batch.ts';
 import type { CanvasElement, ScenarioAssumptions } from './canvas-types';
 
 export interface StressTestSettings {
@@ -28,6 +30,9 @@ export interface StressProcessResult {
   breakMinutes: number;
   failureMinutes: number;
   downtimeMinutes: number;
+  /** Minutos com material na entrada, mas aguardando completar o lote de produção. */
+  batchWaitMinutes: number;
+  batchMode: boolean;
   effectiveCycleSec: number;
 }
 
@@ -64,6 +69,7 @@ interface PreparedProcess {
   quality: number;
   bufferLimit: number;
   initialQueue: number;
+  batch: BatchSettings;
 }
 
 const STOCK_KINDS = ['inventory', 'safety-stock', 'buffer', 'supermarket', 'fifo'] as const;
@@ -110,6 +116,7 @@ function prepareProcesses(elements: CanvasElement[]) {
       quality,
       bufferLimit,
       initialQueue: index === rawProcesses.length - 1 ? 0 : initialQueue,
+      batch: batchSettings(element),
     };
   });
 }
@@ -160,6 +167,12 @@ export function runStressTest(
   const breakMinutes = processes.map(() => 0);
   const failureMinutes = processes.map(() => 0);
   const downtimeMinutes = processes.map(() => 0);
+  const batchWaitMinutes = processes.map(() => 0);
+  // Estado dos processos em lote: entrada já retirada da fila, setup pendente e saída aguardando transferência.
+  const batchRemaining = processes.map(() => 0);
+  const setupRemaining = processes.map(() => 0);
+  const transferProgress = processes.map(() => 0);
+  const outputHold = processes.map(() => 0);
   const maxQueues = processes.map((_, index) => queues[index]);
   const supplierWindowMinutes = Math.max(1, minutesPerDay - supplierDelayMinutes);
   const dailyReleaseRate = supplierDelayMinutes < minutesPerDay ? dailyDemand / supplierWindowMinutes : 0;
@@ -169,6 +182,31 @@ export function runStressTest(
   let maxWip = queues.reduce((sum, queue) => sum + queue, 0);
   let ruptureDay: number | null = null;
   const dayResults: StressDayResult[] = [];
+  const currentWip = () => queues.reduce((sum, queue) => sum + queue, 0)
+    + batchRemaining.reduce((sum, units) => sum + units, 0)
+    + outputHold.reduce((sum, units) => sum + units, 0)
+    + unitsInTransport;
+  const deliverFromLast = (minute: number, good: number) => {
+    if (transportDelayMinutes <= 0) delivered += good;
+    else {
+      pendingDeliveries[minute + transportDelayMinutes] += good;
+      unitsInTransport += good;
+    }
+  };
+  /** Libera a saída retida de um processo em lote; devolve false se o próximo estoque não tem espaço. */
+  const releaseBatchOutput = (index: number, minute: number) => {
+    if (outputHold[index] <= 0.0001) return true;
+    if (index === processes.length - 1) {
+      deliverFromLast(minute, outputHold[index]);
+      outputHold[index] = 0;
+      return true;
+    }
+    const space = Math.max(0, processes[index].bufferLimit - queues[index + 1]);
+    const moved = Math.min(outputHold[index], space);
+    queues[index + 1] += moved;
+    outputHold[index] -= moved;
+    return outputHold[index] <= 0.0001;
+  };
 
   for (let minute = 0; minute < totalMinutes; minute += 1) {
     const minuteInDay = minute % minutesPerDay;
@@ -203,6 +241,50 @@ export function runStressTest(
 
       const wave = Math.sin((minute + 1) * (0.071 + index * 0.013) + index * 1.7);
       const cycleMultiplier = Math.max(0.2, 1 + variation * wave);
+      if (process.batch.mode === 'lote') {
+        const { batch } = process;
+        const idle = batchRemaining[index] <= 0.0001 && setupRemaining[index] <= 0.0001;
+        if (idle && !releaseBatchOutput(index, minute)) {
+          blockedMinutes[index] += 1;
+          continue;
+        }
+        if (idle) {
+          if (queues[index] + 0.0001 < batch.batchSize) {
+            if (queues[index] <= 0.0001) starvationMinutes[index] += 1;
+            else batchWaitMinutes[index] += 1;
+            continue;
+          }
+          queues[index] -= batch.batchSize;
+          batchRemaining[index] = batch.batchSize;
+          setupRemaining[index] = batch.setupMin;
+          transferProgress[index] = 0;
+        }
+        let minuteLeft = 1;
+        if (setupRemaining[index] > 0.0001) {
+          const used = Math.min(setupRemaining[index], minuteLeft);
+          setupRemaining[index] -= used;
+          minuteLeft -= used;
+          busyMinutes[index] += used;
+        }
+        if (minuteLeft > 0.0001 && batchRemaining[index] > 0.0001) {
+          const runCapacity = (batch.runCycleSec > 0 ? 60 / batch.runCycleSec : Infinity) / cycleMultiplier;
+          const processed = Math.min(batchRemaining[index], runCapacity * minuteLeft);
+          batchRemaining[index] -= processed;
+          transferProgress[index] += processed;
+          const good = processed * process.quality;
+          produced[index] += processed;
+          goodOutput[index] += good;
+          outputHold[index] += good;
+          busyMinutes[index] += Number.isFinite(runCapacity) ? processed / runCapacity : 0;
+        }
+        const batchFinished = batchRemaining[index] <= 0.0001 && setupRemaining[index] <= 0.0001;
+        if (batchFinished || transferProgress[index] + 0.0001 >= batch.transferBatch) {
+          transferProgress[index] = 0;
+          releaseBatchOutput(index, minute);
+        }
+        continue;
+      }
+
       const minuteCapacity = process.capacityPerMinute / cycleMultiplier;
       if (queues[index] <= 0.0001) {
         starvationMinutes[index] += 1;
@@ -226,18 +308,12 @@ export function runStressTest(
       produced[index] += processed;
       goodOutput[index] += good;
       busyMinutes[index] += processed / Math.max(minuteCapacity, 0.0001);
-      if (index === processes.length - 1) {
-        if (transportDelayMinutes <= 0) delivered += good;
-        else {
-          pendingDeliveries[minute + transportDelayMinutes] += good;
-          unitsInTransport += good;
-        }
-      }
+      if (index === processes.length - 1) deliverFromLast(minute, good);
       else queues[index + 1] += good;
     }
 
     queues.forEach((queue, index) => { maxQueues[index] = Math.max(maxQueues[index], queue); });
-    maxWip = Math.max(maxWip, queues.reduce((sum, queue) => sum + queue, 0) + unitsInTransport);
+    maxWip = Math.max(maxWip, currentWip());
 
     if (minuteInDay === minutesPerDay - 1) {
       const day = Math.floor(minute / minutesPerDay) + 1;
@@ -251,7 +327,7 @@ export function runStressTest(
         delivered,
         backlog,
         serviceLevelPercent,
-        wip: queues.reduce((sum, queue) => sum + queue, 0) + unitsInTransport,
+        wip: currentWip(),
       });
     }
   }
@@ -272,6 +348,8 @@ export function runStressTest(
     breakMinutes: breakMinutes[index],
     failureMinutes: failureMinutes[index],
     downtimeMinutes: downtimeMinutes[index],
+    batchWaitMinutes: batchWaitMinutes[index],
+    batchMode: process.batch.mode === 'lote',
     effectiveCycleSec: process.effectiveCycleSec,
   }));
   const processConstraint = processResults.reduce((worst, process, index) => {
@@ -301,7 +379,13 @@ export function runStressTest(
     : status === 'attention'
       ? `A demanda foi atendida em ${serviceLevelPercent.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%, porém o WIP chegou a ${maxWip.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} unidade(s).`
       : `A linha entregou ${delivered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} unidade(s), sem atraso relevante e com WIP máximo de ${maxWip.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}.`;
-  const recommendation = status === 'rupture'
+  const batchHolder = processResults
+    .filter((process) => process.batchMode && process.batchWaitMinutes >= totalMinutes * 0.1)
+    .sort((left, right) => right.batchWaitMinutes - left.batchWaitMinutes)[0];
+  const batchRecommendation = batchHolder && status !== 'stable'
+    ? `${batchHolder.label} passou ${batchHolder.batchWaitMinutes.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} min esperando completar o lote. Teste um lote de produção menor ou um lote de transferência menor. `
+    : '';
+  const recommendation = batchRecommendation + (status === 'rupture'
     ? transportIsConstraint
       ? 'Reduza o tempo de transporte, antecipe a coleta ou crie uma frequência adicional de expedição antes de aumentar a produção.'
       : supplierIsConstraint
@@ -309,7 +393,7 @@ export function runStressTest(
         : `Atue primeiro em ${constraint.label}: teste redução de ciclo/setup, disponibilidade ou recurso adicional antes de aumentar estoques.`
     : status === 'attention'
       ? `Observe ${constraint?.label ?? 'o processo mais carregado'} e reduza a liberação excessiva antes que a fila se transforme em atraso.`
-      : 'O cenário suporta esta pressão. Aumente gradualmente a demanda ou as perdas para descobrir a margem real de segurança.';
+      : 'O cenário suporta esta pressão. Aumente gradualmente a demanda ou as perdas para descobrir a margem real de segurança.');
 
   return {
     status,

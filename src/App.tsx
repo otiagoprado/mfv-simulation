@@ -23,6 +23,7 @@ import {
 import { exportJPEG, exportPDF, exportSVG, type PaperSize } from './export';
 import { cloneCanvas, syncCanvasForward } from './canvas-sync';
 import { runStressTest, type StressTestSettings } from './stress-test';
+import { batchLeadTime, batchSettings } from './batch';
 import type { Scenario } from './types';
 import truckThreeQuarter from './assets/truck-three-quarter.png';
 
@@ -44,7 +45,7 @@ const TINTABLE_ASSET_KINDS: ElementKind[] = [
   'transport-air','transport-ship','forklift','milk-run',
 ];
 type ActiveKind = 'current' | 'future';
-type ScenarioPreset = 'current' | 'demand-up' | 'demand-down' | 'setup-half' | 'availability-up' | 'bottleneck-resource' | 'quality-up';
+type ScenarioPreset = 'current' | 'demand-up' | 'demand-down' | 'setup-half' | 'availability-up' | 'bottleneck-resource' | 'quality-up' | 'one-piece-flow';
 const KANBAN_CONTROL_KINDS: ElementKind[] = ['kanban-production','kanban-withdrawal','signal-kanban','kanban-post'];
 
 interface FutureVariant {
@@ -268,12 +269,20 @@ function calculateCanvasSimulation(canvas: CanvasState) {
   const processMetrics = [...processElements].reverse().map((element) => {
     const quality = Math.min(100, Math.max(0.1, Number(element.data.qualidade) || 100)) / 100;
     cumulativeYield *= quality;
+    const batch = batchSettings(element);
     return {
       element,
       quality,
+      batch,
+      batchLead: batchLeadTime(batch, taktTimeSec),
       ...calculateProcessLoad(element, dailyDemand, cumulativeYield, canvas.assumptions.availableMinutesPerDay),
     };
   }).reverse();
+  const batchProcessCount = processMetrics.filter((metric) => metric.batch.mode === 'lote').length;
+  const batchLeadTimeSec = processMetrics.reduce((sum, metric) => sum + metric.batchLead.totalSec, 0);
+  const batchLeadTimeDays = canvas.assumptions.availableMinutesPerDay > 0
+    ? batchLeadTimeSec / (canvas.assumptions.availableMinutesPerDay * 60)
+    : 0;
   const finiteCapacities = processMetrics.map((metric) => metric.capacityPerDay).filter(Number.isFinite);
   const bottleneckCapacity = finiteCapacities.length ? Math.min(...finiteCapacities) : 0;
   const bottleneck = processMetrics.find((metric) => metric.capacityPerDay === bottleneckCapacity)?.element;
@@ -385,8 +394,11 @@ function calculateCanvasSimulation(canvas: CanvasState) {
     inventoryDays,
     waitingTimeMin,
     waitingLeadTimeDays,
+    batchProcessCount,
+    batchLeadTimeSec,
+    batchLeadTimeDays,
     processingTimeMin,
-    leadTimeDays: inventoryDays + waitingLeadTimeDays,
+    leadTimeDays: inventoryDays + waitingLeadTimeDays + batchLeadTimeDays,
     timelineItems,
     inventoryElements,
     rawMaterialEntry,
@@ -891,7 +903,8 @@ function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasSimulati
     ? availableSeconds / simulation.bottleneckCapacity
     : Infinity;
   const nominalLeadSec = simulation.processMetrics.reduce((sum, metric) => sum + metric.effectiveCycleSec, 0)
-    + simulation.waitingTimeMin * 60;
+    + simulation.waitingTimeMin * 60
+    + simulation.batchLeadTimeSec;
   const potentialCompleted = Number.isFinite(completionInterval) && elapsedSec >= nominalLeadSec
     ? Math.floor((elapsedSec - nominalLeadSec) / completionInterval) + 1
     : 0;
@@ -1141,6 +1154,9 @@ function canvasForPreset(current: CanvasState, preset: ScenarioPreset) {
   if (preset === 'availability-up') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
     ? { ...element, data: { ...element.data, disp: Math.min(100, (Number(element.data.disp) || 100) + 10) } }
     : element);
+  if (preset === 'one-piece-flow') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
+    ? { ...element, data: { ...element.data, fabricacao: 'unitario' } }
+    : element);
   if (preset === 'quality-up') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
     ? { ...element, data: { ...element.data, qualidade: Math.min(100, (Number(element.data.qualidade) || 100) + 5) } }
     : element);
@@ -1159,8 +1175,8 @@ function canvasForPreset(current: CanvasState, preset: ScenarioPreset) {
 // ─── Field definitions para cada elemento ────────────────────────────────────
 
 const FIELD_DEFS: Partial<Record<ElementKind, { key: string; label: string; type?: string; suffix?: string }[]>> = {
-  process:              [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'setup', label: 'Setup / troca', suffix: 'min' },{ key: 'lote', label: 'Lote', suffix: 'un' },{ key: 'op', label: 'Operadores', suffix: 'pess.' },{ key: 'recurso', label: 'Recursos paralelos', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade / OEE', suffix: '%' },{ key: 'qualidade', label: 'Qualidade na saída', suffix: '%' }],
-  'shared-process':     [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'setup', label: 'Setup / troca', suffix: 'min' },{ key: 'lote', label: 'Lote', suffix: 'un' },{ key: 'op', label: 'Operadores', suffix: 'pess.' },{ key: 'recurso', label: 'Recursos paralelos', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade / OEE', suffix: '%' },{ key: 'qualidade', label: 'Qualidade na saída', suffix: '%' }],
+  process:              [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'setup', label: 'Setup / troca', suffix: 'min' },{ key: 'lote', label: 'Lote de produção', suffix: 'un' },{ key: 'op', label: 'Operadores', suffix: 'pess.' },{ key: 'recurso', label: 'Recursos paralelos', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade / OEE', suffix: '%' },{ key: 'qualidade', label: 'Qualidade na saída', suffix: '%' }],
+  'shared-process':     [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'setup', label: 'Setup / troca', suffix: 'min' },{ key: 'lote', label: 'Lote de produção', suffix: 'un' },{ key: 'op', label: 'Operadores', suffix: 'pess.' },{ key: 'recurso', label: 'Recursos paralelos', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade / OEE', suffix: '%' },{ key: 'qualidade', label: 'Qualidade na saída', suffix: '%' }],
   machine:              [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor da máquina', type: 'color' },{ key: 'recurso', label: 'Quantidade', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade', suffix: '%' }],
   inspection:           [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'op', label: 'Operadores', suffix: 'pess.' }],
   'work-cell':          [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'op', label: 'Operadores', suffix: 'pess.' }],
@@ -1638,6 +1654,13 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
           <text x={0} y={4} textAnchor="middle" fontSize={7.5} fontWeight="850" fontFamily="Arial" fill="white">PULL · LIMITE {Math.max(0, Number(control.data.qty) || 0)}</text>
         </g>;
       })}
+      {simulation.processMetrics.filter((metric) => metric.batch.mode === 'lote').map((metric) => {
+        const size = elementDimensions(metric.element);
+        return <g key={`batch-${metric.element.id}`} transform={`translate(${metric.element.x + size.width / 2},${metric.element.y + size.height + 16})`}>
+          <rect x={-60} y={-10} width={120} height={20} rx={10} fill="#5b3fa0" />
+          <text x={0} y={4} textAnchor="middle" fontSize={7.5} fontWeight="850" fontFamily="Arial" fill="white">LOTE {metric.batch.batchSize} · TRANSF. {metric.batch.transferBatch}</text>
+        </g>;
+      })}
       {truckCenters.map((truck) => loadingTruckIds.has(truck.id) && <g key={`loading-${truck.id}`}>
         <rect x={truck.element.x - 5} y={truck.element.y - 5} width={truck.size.width + 10} height={truck.size.height + 10} rx={12} className="live-truck-loading" />
         <g transform={`translate(${truck.element.x + truck.size.width / 2 - 45},${truck.element.y - 30})`}>
@@ -1738,6 +1761,10 @@ function ElementPopover({ el, processes, assumptions, onUpdate, onDelete, onClos
   const scenario = calculateScenario(assumptions);
   const leveling = buildLeveledSequence(scenario.productMetrics);
   const kanbanSizing = isKanbanControl ? calculateKanbanSizing(el, assumptions) : null;
+  const isProcessKind = el.kind === 'process' || el.kind === 'shared-process';
+  const batch = batchSettings(el);
+  const batchLead = batchLeadTime(batch, scenario.taktTimeSec);
+  const formatMinutes = (seconds: number) => `${(seconds / 60).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} min`;
   const updateKanbanData = (key: string, value: string | number) => onUpdate({ data: { ...el.data, [key]: value } });
 
   useEffect(() => {
@@ -1826,6 +1853,33 @@ function ElementPopover({ el, processes, assumptions, onUpdate, onDelete, onClos
             )}
           </div>
         ))}
+        {isProcessKind && <div className="batch-editor">
+          <div className="popover-field" style={{ marginTop: 8 }}>
+            <label>Fabricação</label>
+            <SiteSelect className="popover-select" value={batch.mode} ariaLabel="Modo de fabricação"
+              options={[{ value: 'unitario', label: 'Fluxo unitário (peça a peça)' }, { value: 'lote', label: 'Por lotes' }]}
+              onChange={(value) => onUpdate({ data: { ...el.data, fabricacao: value } })}/>
+            <small className="popover-field-help">{batch.mode === 'lote'
+              ? 'O processo só começa com o lote completo na entrada e libera as peças em lotes de transferência.'
+              : 'Cada peça segue para o próximo processo assim que fica pronta; o setup é diluído no lote.'}</small>
+          </div>
+          {batch.mode === 'lote' && <>
+            <div className="popover-field" style={{ marginTop: 8 }}>
+              <label>Lote de transferência</label>
+              <div className="popover-input-wrap">
+                <input type="number" min={1} max={batch.batchSize} step={1} value={batch.transferBatch}
+                  onChange={(event) => onUpdate({ data: { ...el.data, loteTransf: Math.max(1, Math.round(Number(event.target.value) || 1)) } })} />
+                <span>un</span>
+              </div>
+              <small className="popover-field-help">Peças que seguem juntas ao próximo processo. Igual ao lote de produção: o lote inteiro anda junto.</small>
+            </div>
+            <div className="kanban-sizing-result">
+              <div><span>Espera para formar o lote</span><strong>{formatMinutes(batchLead.formationSec)}</strong></div>
+              <div><span>Setup + lote de transferência</span><strong>{formatMinutes(batchLead.processingSec)}</strong></div>
+              <div><span>Atraso por peça neste processo</span><strong>{formatMinutes(batchLead.totalSec)}</strong></div>
+            </div>
+          </>}
+        </div>}
         <ElementSizeFields el={el} onUpdate={onUpdate} />
       </div>
       <div className="popover-footer">
@@ -2246,6 +2300,7 @@ const SCENARIO_PRESETS: { id: ScenarioPreset; title: string; description: string
   { id: 'setup-half', title: 'Setup −50%', description: 'Simula melhoria de troca e lotes menores.' },
   { id: 'availability-up', title: 'Disponibilidade +10 p.p.', description: 'Testa estabilidade e manutenção.' },
   { id: 'quality-up', title: 'Qualidade +5 p.p.', description: 'Reduz perdas acumuladas ao longo do fluxo.' },
+  { id: 'one-piece-flow', title: 'Fluxo unitário', description: 'Troca a fabricação por lotes por peça a peça em todos os processos.' },
 ];
 
 function ScenarioCreateModal({ onCreate, onClose }: { onCreate: (name: string, preset: ScenarioPreset) => void; onClose: () => void }) {
@@ -3564,6 +3619,7 @@ function ManualModal({ onClose }: { onClose: () => void }) {
       title: 'Edite e organize os elementos', icon: <Pencil size={18}/>, summary: 'Cada símbolo possui dados próprios, posição, tamanho e regras visuais.',
       bullets: [
         'Dê duplo clique em uma caixa para editar nome, tempos, quantidade, disponibilidade, qualidade e dimensões.',
+        'Nos processos, escolha Fabricação "Por lotes" para simular lote de produção e lote de transferência; o atraso entra no lead time e no teste de estresse.',
         'Arraste o elemento para mover. Nas setas, arraste o corpo para mover e as pontas para redimensionar ou conectar.',
         'Selecione um elemento e use Delete para excluir. A caixa de Controle da Produção é fixa e não pode ser removida.',
       ],
@@ -3740,11 +3796,11 @@ function StressTestModal({ canvas, onFocus, onClose }: {
 
           {!!result.processResults.length && <section className="stress-processes">
             <div className="stress-section-title"><strong>Leitura por processo</strong><span>Onde o fluxo acumula, espera ou bloqueia</span></div>
-            <div className="stress-table-wrap"><table><thead><tr><th>Processo</th><th>Utilização</th><th>Maior fila</th><th>Sem material</th><th>Bloqueado</th><th>Intervalos</th><th>Falha</th><th>Outras paradas</th></tr></thead><tbody>
+            <div className="stress-table-wrap"><table><thead><tr><th>Processo</th><th>Utilização</th><th>Maior fila</th><th>Sem material</th><th>Aguardando lote</th><th>Bloqueado</th><th>Intervalos</th><th>Falha</th><th>Outras paradas</th></tr></thead><tbody>
               {result.processResults.map((process) => <tr key={process.id} className={process.id === result.constraintId ? 'constraint' : ''} onClick={() => onFocus(process.id)}>
                 <td><strong>{process.label}</strong>{process.id === result.constraintId && <span>restrição</span>}</td>
                 <td>{format(process.utilizationPercent)}%</td><td>{format(process.maxQueue)} un</td>
-                <td>{format(process.starvationMinutes, 0)} min</td><td>{format(process.blockedMinutes, 0)} min</td><td>{format(process.breakMinutes, 0)} min</td><td>{format(process.failureMinutes, 0)} min</td><td>{format(process.downtimeMinutes, 0)} min</td>
+                <td>{format(process.starvationMinutes, 0)} min</td><td>{process.batchMode ? `${format(process.batchWaitMinutes, 0)} min` : '—'}</td><td>{format(process.blockedMinutes, 0)} min</td><td>{format(process.breakMinutes, 0)} min</td><td>{format(process.failureMinutes, 0)} min</td><td>{format(process.downtimeMinutes, 0)} min</td>
               </tr>)}
             </tbody></table></div>
           </section>}

@@ -142,7 +142,7 @@ export function ProcessSymbol({ el, selected, onEdit, taktTimeSec = 0, available
   const rows = [
     { k: 'Nº operador', v: `${el.data.op ?? 1}` },
     { k: 'T/C', v: `${el.data.tc ?? 0} s` },
-    { k: 'Setup', v: `${el.data.setup ?? 0} min` },
+    { k: 'Setup / lote', v: `${el.data.setup ?? 0} min · ${el.data.lote ?? 1} un` },
     { k: 'Recurso', v: `${el.data.recurso ?? 1}` },
     { k: 'Disponib.', v: `${el.data.disp ?? 100}%` },
     { k: 'Qualidade', v: `${el.data.qualidade ?? 100}%` },
@@ -158,6 +158,10 @@ export function ProcessSymbol({ el, selected, onEdit, taktTimeSec = 0, available
         <text x={17} y={11} fontSize={7} fontWeight="700" fontFamily="Arial" fill={!valid ? '#815a08' : overloaded ? '#a51f18' : '#126b3b'}>
           {!valid ? 'SEM TEMPO DE CICLO' : overloaded ? 'SOBRECARREGADO' : `CARGA ${loadPercent.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}%`}
         </text>
+      </g>}
+      {el.data.fabricacao === 'lote' && <g transform={`translate(${w - 58},-19)`}>
+        <rect width={54} height={16} rx={8} fill="#ece6fa" stroke="#5b3fa0" strokeWidth={0.8} />
+        <text x={27} y={11} textAnchor="middle" fontSize={7} fontWeight="700" fontFamily="Arial" fill="#3f2a78">POR LOTE</text>
       </g>}
       <rect width={w} height={h} rx={4} fill="white" stroke={selected ? '#0071e3' : overloaded ? '#ff3b30' : colors.dark} strokeWidth={selected || overloaded ? 2.5 : 1.5} />
       <rect width={w} height={38} rx={4} fill={selected ? colors.light : overloaded ? '#ffd5d1' : colors.mid} />
