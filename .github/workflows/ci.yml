@@ -22,7 +22,7 @@ jobs:
       - run: |
           set -o pipefail
           node --test --test-isolation=none --test-reporter=tap tests/*.test.mjs 2>&1 | tee test-output.tap || status=$?
-          grep -E '^# (tests|pass|fail)' test-output.tap | sed 's/^/::notice::/'
-          grep -E '^\s*not ok' test-output.tap | sed 's/^\s*/::error::/'
+          grep -E '^# (tests|pass|fail)' test-output.tap | sed 's/^/::notice::/' || true
+          grep -E '^\s*not ok' test-output.tap | sed 's/^\s*/::error::/' || true
           exit ${status:-0}
       - run: pnpm run build
