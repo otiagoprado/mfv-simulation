@@ -391,7 +391,7 @@ export function runStressTest(
     .filter((process) => process.batchMode && process.batchWaitMinutes >= totalMinutes * 0.1)
     .sort((left, right) => right.batchWaitMinutes - left.batchWaitMinutes)[0];
   const batchRecommendation = batchHolder && status !== 'stable'
-    ? `${batchHolder.label} passou ${batchHolder.batchWaitMinutes.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} min esperando completar o lote. Teste um lote de produção menor ou um lote de transferência menor. `
+    ? `${batchHolder.label} passou ${batchHolder.batchWaitMinutes.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} min esperando completar o lote. Teste um lote de produção menor. `
     : '';
   const recommendation = batchRecommendation + (status === 'rupture'
     ? transportIsConstraint

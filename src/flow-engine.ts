@@ -362,7 +362,7 @@ export type LiveUnitStage =
   | { kind: 'queue'; station: number; position: number }
   /** Em setup ou sendo produzida no processo. */
   | { kind: 'processing'; station: number; position: number }
-  /** Pronta no buffer de saída, esperando o restante do lote de transferência para seguir. */
+  /** Pronta no buffer de saída, esperando o restante do lote para seguir. */
   | { kind: 'holding'; station: number; position: number }
   /** Produto acabado na expedição, esperando completar o lote de expedição. */
   | { kind: 'shipping'; station: number; position: number };
@@ -466,7 +466,7 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
             stationStart[unit] = offset === 0 ? batchStart : runStart + offset * station.runSec;
             stationFinish[unit] = runStart + (offset + 1) * station.runSec;
           });
-          // Cada lote de transferência segue junto quando a última peça dele fica pronta.
+          // O lote segue junto quando a última peça dele fica pronta.
           for (let group = 0; group < members.length; group += station.transferBatch) {
             const groupMembers = members.slice(group, group + station.transferBatch);
             const groupReady = stationFinish[groupMembers[groupMembers.length - 1]];

@@ -13,7 +13,7 @@ Aplicação web para criar, comparar e imprimir cenários de Mapeamento de Fluxo
 - Execução visual do fluxo com caixas em movimento, carregamento de caminhões, filas, WIP e orientação de gargalos
 - Teste de estresse do Estado Futuro com turnos, intervalos, falha por processo, atraso de fornecedor e transporte, além de filas, bloqueios e identificação do momento da ruptura
 - Biblioteca de símbolos e fluxos inspirada no padrão visual das planilhas MFV
-- Fabricação por lotes por processo, com lote de produção, lote de transferência, atraso no lead time e efeito no teste de estresse
+- Fabricação por lotes por processo: lote de produção maior que 1 faz o operador produzir todo o lote antes de ele seguir ao próximo processo, com atraso no lead time e efeito no teste de estresse
 - Salvamento local no navegador, com aviso quando o armazenamento está cheio
 - Projeto completo em arquivo .json para backup, troca entre computadores e envio a outras pessoas
 - Relatório preparado para impressão ou PDF

@@ -1,5 +1,6 @@
 import { DEFAULT_TRUCK_COLOR, type CanvasElement } from './canvas-types';
 import { percentValue } from './numbers';
+import { batchSizeOf } from './batch';
 import truckThreeQuarter from './assets/truck-three-quarter.png';
 import cargoAirplaneThreeQuarter from './assets/cargo-airplane-three-quarter.png';
 import cargoShipThreeQuarter from './assets/cargo-ship-three-quarter.png';
@@ -159,7 +160,7 @@ export function ProcessSymbol({ el, selected, onEdit, taktTimeSec = 0, available
           {!valid ? 'SEM TEMPO DE CICLO' : overloaded ? 'SOBRECARREGADO' : `CARGA ${loadPercent.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}%`}
         </text>
       </g>}
-      {el.data.fabricacao === 'lote' && <g transform={`translate(${w - 58},-19)`}>
+      {batchSizeOf(el.data) > 1 && <g transform={`translate(${w - 58},-19)`}>
         <rect width={54} height={16} rx={8} fill="#ece6fa" stroke="#5b3fa0" strokeWidth={0.8} />
         <text x={27} y={11} textAnchor="middle" fontSize={7} fontWeight="700" fontFamily="Arial" fill="#3f2a78">POR LOTE</text>
       </g>}

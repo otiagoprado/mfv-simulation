@@ -817,10 +817,10 @@ function canvasForPreset(current: CanvasState, preset: ScenarioPreset) {
     ? { ...element, data: { ...element.data, disp: Math.min(100, percentValue(element.data.disp) + 10) } }
     : element);
   if (preset === 'one-piece-flow') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
-    ? { ...element, data: { ...element.data, fabricacao: 'unitario' } }
+    ? { ...element, data: { ...element.data, lote: 1 } }
     : element);
   if (preset === 'batch-production') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
-    ? { ...element, data: { ...element.data, fabricacao: 'lote', lote: Math.max(1, Number(element.data.lote) || 1) > 1 ? Number(element.data.lote) : 5 } }
+    ? { ...element, data: { ...element.data, lote: Math.max(1, Number(element.data.lote) || 1) > 1 ? Number(element.data.lote) : 5 } }
     : element);
   if (preset === 'quality-up') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
     ? { ...element, data: { ...element.data, qualidade: Math.min(100, percentValue(element.data.qualidade) + 5) } }
@@ -1366,7 +1366,7 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
         const size = elementDimensions(metric.element);
         return <g key={`batch-${metric.element.id}`} transform={`translate(${metric.element.x + size.width / 2},${metric.element.y + size.height + 76})`}>
           <rect x={-60} y={-10} width={120} height={20} rx={10} fill="#5b3fa0" />
-          <text x={0} y={4} textAnchor="middle" fontSize={7.5} fontWeight="850" fontFamily="Arial" fill="white">LOTE {metric.batch.batchSize} · TRANSF. {metric.batch.transferBatch}</text>
+          <text x={0} y={4} textAnchor="middle" fontSize={7.5} fontWeight="850" fontFamily="Arial" fill="white">LOTE DE {metric.batch.batchSize} PEÇAS</text>
         </g>;
       })}
       {truckCenters.map((truck) => loadingTruckIds.has(truck.id) && <g key={`loading-${truck.id}`}>
@@ -1585,31 +1585,14 @@ function ElementPopover({ el, processes, assumptions, onUpdate, onDelete, onClos
           </div>
         ))}
         {isProcessKind && <div className="batch-editor">
-          <div className="popover-field" style={{ marginTop: 8 }}>
-            <label>Fabricação</label>
-            <SiteSelect className="popover-select" value={batch.mode} ariaLabel="Modo de fabricação"
-              options={[{ value: 'unitario', label: 'Fluxo unitário (peça a peça)' }, { value: 'lote', label: 'Por lotes' }]}
-              onChange={(value) => onUpdate({ data: { ...el.data, fabricacao: value } })}/>
-            <small className="popover-field-help">{batch.mode === 'lote'
-              ? 'O processo só começa com o lote completo na entrada e libera as peças em lotes de transferência.'
-              : 'Cada peça segue para o próximo processo assim que fica pronta; o setup é diluído no lote.'}</small>
-          </div>
-          {batch.mode === 'lote' && <>
-            <div className="popover-field" style={{ marginTop: 8 }}>
-              <label>Lote de transferência</label>
-              <div className="popover-input-wrap">
-                <input type="number" min={1} max={batch.batchSize} step={1} value={batch.transferBatch}
-                  onChange={(event) => onUpdate({ data: { ...el.data, loteTransf: Math.max(1, Math.round(Number(event.target.value) || 1)) } })} />
-                <span>un</span>
-              </div>
-              <small className="popover-field-help">Peças que seguem juntas ao próximo processo. Igual ao lote de produção: o lote inteiro anda junto.</small>
-            </div>
-            <div className="kanban-sizing-result">
-              <div><span>Espera para formar o lote</span><strong>{formatMinutes(batchLead.formationSec)}</strong></div>
-              <div><span>Setup + lote de transferência</span><strong>{formatMinutes(batchLead.processingSec)}</strong></div>
-              <div><span>Atraso por peça neste processo</span><strong>{formatMinutes(batchLead.totalSec)}</strong></div>
-            </div>
-          </>}
+          <small className="popover-field-help">{batch.mode === 'lote'
+            ? `Produção em lotes: o operador espera as ${batch.batchSize} peças do lote na entrada, produz uma a uma para a saída e só então o lote inteiro segue ao próximo processo. Lote 1 volta ao fluxo contínuo.`
+            : 'Fluxo contínuo: cada peça segue para o próximo processo assim que fica pronta. Para produzir em lotes, informe um lote de produção maior que 1.'}</small>
+          {batch.mode === 'lote' && <div className="kanban-sizing-result">
+            <div><span>Espera para formar o lote</span><strong>{formatMinutes(batchLead.formationSec)}</strong></div>
+            <div><span>Setup + produção do lote</span><strong>{formatMinutes(batchLead.processingSec)}</strong></div>
+            <div><span>Atraso por peça neste processo</span><strong>{formatMinutes(batchLead.totalSec)}</strong></div>
+          </div>}
         </div>}
         <ElementSizeFields el={el} onUpdate={onUpdate} />
       </div>
@@ -2031,7 +2014,7 @@ const SCENARIO_PRESETS: { id: ScenarioPreset; title: string; description: string
   { id: 'setup-half', title: 'Setup −50%', description: 'Simula melhoria de troca e lotes menores.' },
   { id: 'availability-up', title: 'Disponibilidade +10 p.p.', description: 'Testa estabilidade e manutenção.' },
   { id: 'quality-up', title: 'Qualidade +5 p.p.', description: 'Reduz perdas acumuladas ao longo do fluxo.' },
-  { id: 'one-piece-flow', title: 'Fluxo unitário', description: 'Troca a fabricação por lotes por peça a peça em todos os processos.' },
+  { id: 'one-piece-flow', title: 'Fluxo unitário', description: 'Lote de produção 1 em todos os processos: as peças andam uma a uma.' },
   { id: 'batch-production', title: 'Produção em lotes', description: 'Todos os processos fabricam por lote; lotes de 1 peça passam a 5.' },
 ];
 
@@ -3398,7 +3381,7 @@ function ManualModal({ onClose }: { onClose: () => void }) {
       title: 'Edite e organize os elementos', icon: <Pencil size={18}/>, summary: 'Cada símbolo possui dados próprios, posição, tamanho e regras visuais.',
       bullets: [
         'Dê duplo clique em uma caixa para editar nome, tempos, quantidade, disponibilidade, qualidade e dimensões.',
-        'Nos processos, escolha Fabricação "Por lotes" para simular lote de produção e lote de transferência; o atraso entra no lead time e no teste de estresse.',
+        'Nos processos, o campo Lote de produção define o fluxo: 1 é peça a peça; maior que 1 é fabricação por lotes, em que o operador produz todas as peças do lote e só então o lote segue ao próximo processo.',
         'Arraste o elemento para mover. Nas setas, arraste o corpo para mover e as pontas para redimensionar ou conectar.',
         'Selecione um elemento e use Delete para excluir. A caixa de Controle da Produção é fixa e não pode ser removida.',
       ],
