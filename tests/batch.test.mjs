@@ -52,7 +52,7 @@ test('o lote inteiro anda junto: lote de transferência é igual ao lote de prod
   assert.equal(settings.transferBatch, 10);
 });
 
-test('fabricação por lotes acumula WIP e registra espera para formar o lote', () => {
+test('fabricação por lotes acumula WIP e registra espera para fechar o lote', () => {
   const unit = runStressTest(line(), assumptions, baseSettings);
   const batch = runStressTest(line({ lote: 50 }), assumptions, baseSettings);
   assert.equal(batch.processResults[0].batchMode, true);
@@ -68,7 +68,7 @@ test('lote de produção menor entrega mais cedo', () => {
 });
 
 test('setup do lote ocupa o processo antes da produção', () => {
-  const withSetup = runStressTest(line({ lote: 50, setup: 30 }), assumptions, baseSettings);
+  const withSetup = runStressTest(line({ lote: 50, setup: 60 }), assumptions, baseSettings);
   const withoutSetup = runStressTest(line({ lote: 50 }), assumptions, baseSettings);
   assert.ok(withSetup.deliveredUnits < withoutSetup.deliveredUnits);
 });

@@ -257,9 +257,10 @@ export function runStressTest(
           blockedMinutes[index] += 1;
           continue;
         }
+        // Peças prontas seguradas na saída enquanto o lote não fecha contam como espera de lote.
+        if (outputHold[index] > 0.0001 && !lotDone) batchWaitMinutes[index] += 1;
         if (queues[index] <= 0.0001) {
-          if (outputHold[index] > 0.0001) batchWaitMinutes[index] += 1;
-          else starvationMinutes[index] += 1;
+          starvationMinutes[index] += 1;
           continue;
         }
         if (lotDone) {
