@@ -1608,11 +1608,11 @@ function ElementPopover({ el, processes, assumptions, onUpdate, onDelete, onClos
         ))}
         {isProcessKind && <div className="batch-editor">
           <small className="popover-field-help">{batch.mode === 'lote'
-            ? `Produção em lotes: o operador espera as ${batch.batchSize} peças do lote na entrada, produz uma a uma para a saída e só então o lote inteiro segue ao próximo processo. Lote 1 volta ao fluxo contínuo.`
+            ? `Produção em lotes: cada peça entra em produção assim que chega, fica no buffer de saída e o lote de ${batch.batchSize} peças só segue ao próximo processo quando a última fica pronta. Lote 1 volta ao fluxo contínuo.`
             : 'Fluxo contínuo: cada peça segue para o próximo processo assim que fica pronta. Para produzir em lotes, informe um lote de produção maior que 1.'}</small>
           {batch.mode === 'lote' && <div className="kanban-sizing-result">
-            <div><span>Espera para formar o lote</span><strong>{formatMinutes(batchLead.formationSec)}</strong></div>
-            <div><span>Setup + produção do lote</span><strong>{formatMinutes(batchLead.processingSec)}</strong></div>
+            <div><span>Espera na saída até fechar o lote</span><strong>{formatMinutes(batchLead.formationSec)}</strong></div>
+            <div><span>Setup do lote</span><strong>{formatMinutes(batchLead.processingSec)}</strong></div>
             <div><span>Atraso por peça neste processo</span><strong>{formatMinutes(batchLead.totalSec)}</strong></div>
           </div>}
         </div>}
@@ -3403,7 +3403,7 @@ function ManualModal({ onClose }: { onClose: () => void }) {
       title: 'Edite e organize os elementos', icon: <Pencil size={18}/>, summary: 'Cada símbolo possui dados próprios, posição, tamanho e regras visuais.',
       bullets: [
         'Dê duplo clique em uma caixa para editar nome, tempos, quantidade, disponibilidade, qualidade e dimensões.',
-        'Nos processos, o campo Lote de produção define o fluxo: 1 é peça a peça; maior que 1 é fabricação por lotes, em que o operador produz todas as peças do lote e só então o lote segue ao próximo processo.',
+        'Nos processos, o campo Lote de produção define o fluxo: 1 é peça a peça; maior que 1 é fabricação por lotes: a peça entra em produção assim que chega, mas o lote só segue ao próximo processo quando todas as suas peças ficam prontas.',
         'Arraste o elemento para mover. Nas setas, arraste o corpo para mover e as pontas para redimensionar ou conectar.',
         'Selecione um elemento e use Delete para excluir. A caixa de Controle da Produção é fixa e não pode ser removida.',
       ],

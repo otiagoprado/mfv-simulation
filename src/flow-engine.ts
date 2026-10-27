@@ -454,25 +454,21 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
           freeAt = stationFinish[unit];
         });
       } else {
-        for (let first = 0; first + station.batchSize <= units.length; first += station.batchSize) {
-          const members = Array.from({ length: station.batchSize }, (_, offset) => first + offset);
-          const lastArrival = Math.max(...members.map((unit) => stationArrival[unit]));
-          if (!Number.isFinite(lastArrival)) break;
-          // O lote só começa com todas as peças no buffer de entrada; o setup ocupa o processo antes da primeira.
-          // Depois o operador produz uma peça por vez e as deixa no buffer de saída.
-          const batchStart = Math.max(lastArrival, freeAt);
-          const runStart = batchStart + station.setupSec;
-          members.forEach((unit, offset) => {
-            stationStart[unit] = offset === 0 ? batchStart : runStart + offset * station.runSec;
-            stationFinish[unit] = runStart + (offset + 1) * station.runSec;
-          });
-          // O lote segue junto quando a última peça dele fica pronta.
-          for (let group = 0; group < members.length; group += station.transferBatch) {
-            const groupMembers = members.slice(group, group + station.transferBatch);
-            const groupReady = stationFinish[groupMembers[groupMembers.length - 1]];
-            groupMembers.forEach((unit) => { stationDepart[unit] = groupReady; });
-          }
-          freeAt = runStart + station.batchSize * station.runSec;
+        // O lote é regra de saída, não de entrada: cada peça entra em produção assim que chega
+        // (setup antes da primeira peça de cada lote) e fica no buffer de saída até o lote completar.
+        units.forEach((_, unit) => {
+          if (!Number.isFinite(stationArrival[unit])) return;
+          const setup = unit % station.batchSize === 0 ? station.setupSec : 0;
+          stationStart[unit] = Math.max(stationArrival[unit], freeAt);
+          stationFinish[unit] = stationStart[unit] + setup + station.runSec;
+          freeAt = stationFinish[unit];
+        });
+        // O lote inteiro segue junto quando a última peça dele fica pronta.
+        for (let first = 0; first < units.length; first += station.batchSize) {
+          const members = Array.from({ length: Math.min(station.batchSize, units.length - first) }, (_, offset) => first + offset);
+          const complete = members.length === station.batchSize && members.every((unit) => Number.isFinite(stationFinish[unit]));
+          const groupReady = complete ? Math.max(...members.map((unit) => stationFinish[unit])) : Infinity;
+          members.forEach((unit) => { stationDepart[unit] = groupReady; });
         }
       }
       arrival.push(stationArrival);

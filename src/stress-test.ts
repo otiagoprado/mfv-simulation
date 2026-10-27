@@ -176,10 +176,9 @@ export function runStressTest(
   const failureMinutes = processes.map(() => 0);
   const downtimeMinutes = processes.map(() => 0);
   const batchWaitMinutes = processes.map(() => 0);
-  // Estado dos processos em lote: entrada já retirada da fila, setup pendente e saída aguardando transferência.
+  // Estado dos processos em lote: peças do lote atual ainda por produzir, setup pendente e saída segurada até o lote completar.
   const batchRemaining = processes.map(() => 0);
   const setupRemaining = processes.map(() => 0);
-  const transferProgress = processes.map(() => 0);
   const outputHold = processes.map(() => 0);
   const maxQueues = processes.map((_, index) => queues[index]);
   const supplierWindowMinutes = Math.max(1, minutesPerDay - supplierDelayMinutes);
@@ -251,21 +250,21 @@ export function runStressTest(
       const cycleMultiplier = Math.max(0.2, 1 + variation * wave);
       if (process.batch.mode === 'lote') {
         const { batch } = process;
-        const idle = batchRemaining[index] <= 0.0001 && setupRemaining[index] <= 0.0001;
-        if (idle && !releaseBatchOutput(index, minute)) {
+        // O lote é regra de saída: o processo produz peça a peça conforme chegam e segura
+        // a saída até completar o lote; o setup acontece no início de cada lote.
+        const lotDone = batchRemaining[index] <= 0.0001 && setupRemaining[index] <= 0.0001;
+        if (lotDone && !releaseBatchOutput(index, minute)) {
           blockedMinutes[index] += 1;
           continue;
         }
-        if (idle) {
-          if (queues[index] + 0.0001 < batch.batchSize) {
-            if (queues[index] <= 0.0001) starvationMinutes[index] += 1;
-            else batchWaitMinutes[index] += 1;
-            continue;
-          }
-          queues[index] -= batch.batchSize;
+        if (queues[index] <= 0.0001) {
+          if (outputHold[index] > 0.0001) batchWaitMinutes[index] += 1;
+          else starvationMinutes[index] += 1;
+          continue;
+        }
+        if (lotDone) {
           batchRemaining[index] = batch.batchSize;
           setupRemaining[index] = batch.setupMin;
-          transferProgress[index] = 0;
         }
         let minuteLeft = 1;
         if (setupRemaining[index] > 0.0001) {
@@ -276,20 +275,16 @@ export function runStressTest(
         }
         if (minuteLeft > 0.0001 && batchRemaining[index] > 0.0001) {
           const runCapacity = (batch.runCycleSec > 0 ? 60 / batch.runCycleSec : Infinity) / cycleMultiplier;
-          const processed = Math.min(batchRemaining[index], runCapacity * minuteLeft);
+          const processed = Math.min(queues[index], batchRemaining[index], runCapacity * minuteLeft);
+          queues[index] -= processed;
           batchRemaining[index] -= processed;
-          transferProgress[index] += processed;
           const good = processed * process.quality;
           produced[index] += processed;
           goodOutput[index] += good;
           outputHold[index] += good;
           busyMinutes[index] += Number.isFinite(runCapacity) ? processed / runCapacity : 0;
         }
-        const batchFinished = batchRemaining[index] <= 0.0001 && setupRemaining[index] <= 0.0001;
-        if (batchFinished || transferProgress[index] + 0.0001 >= batch.transferBatch) {
-          transferProgress[index] = 0;
-          releaseBatchOutput(index, minute);
-        }
+        if (batchRemaining[index] <= 0.0001 && setupRemaining[index] <= 0.0001) releaseBatchOutput(index, minute);
         continue;
       }
 

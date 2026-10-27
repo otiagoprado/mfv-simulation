@@ -34,8 +34,8 @@ test('estoque em dias compõe o lead time', () => {
 
 test('fabricação por lotes soma o atraso do lote ao lead time', () => {
   const result = calculateCanvasSimulation(canvas([process('a', 0, 60, { lote: 10 }), process('b', 300, 60)]));
-  close(result.batchLeadTimeSec, 9 * 120 + 9 * 60);
-  close(result.leadTimeDays, (9 * 120 + 9 * 60) / (480 * 60));
+  close(result.batchLeadTimeSec, 9 * 120);
+  close(result.leadTimeDays, (9 * 120) / (480 * 60));
   assert.equal(result.batchProcessCount, 1);
 });
 

@@ -15,9 +15,9 @@ export interface BatchSettings {
 }
 
 export interface BatchLeadTime {
-  /** Espera da primeira peça até o lote ficar completo na entrada. */
+  /** Espera da primeira peça no buffer de saída até a última do lote ficar pronta. */
   formationSec: number;
-  /** Setup + produção do lote antes de a peça seguir. */
+  /** Setup no início do lote. */
   processingSec: number;
   totalSec: number;
 }
@@ -51,13 +51,13 @@ export function batchSettings(element: Pick<CanvasElement, 'data'>): BatchSettin
 
 /**
  * Tempo extra que a fabricação por lotes adiciona ao atravessamento de uma peça.
- * A primeira peça do lote espera as demais chegarem no ritmo do takt, depois espera
- * o setup e a produção do lote inteiro antes de seguir.
+ * A primeira peça do lote é produzida assim que chega, mas fica no buffer de saída até as
+ * demais chegarem (no ritmo do takt) e serem produzidas; o setup entra no início de cada lote.
  */
 export function batchLeadTime(settings: BatchSettings, taktTimeSec: number): BatchLeadTime {
   if (settings.mode !== 'lote') return { formationSec: 0, processingSec: 0, totalSec: 0 };
   const arrivalInterval = Number.isFinite(taktTimeSec) && taktTimeSec > 0 ? taktTimeSec : 0;
-  const formationSec = (settings.batchSize - 1) * arrivalInterval;
-  const processingSec = settings.setupMin * 60 + (settings.transferBatch - 1) * settings.runCycleSec;
+  const formationSec = (settings.batchSize - 1) * Math.max(arrivalInterval, settings.runCycleSec);
+  const processingSec = settings.setupMin * 60;
   return { formationSec, processingSec, totalSec: formationSec + processingSec };
 }

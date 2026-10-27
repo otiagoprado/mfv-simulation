@@ -16,24 +16,29 @@ const live = (elements, elapsedSec) => {
 };
 const atStation = (flow, station) => flow.units.filter((unit) => unit.stage.station === station && unit.stage.kind !== 'transit');
 
-test('o lote só começa quando as 5 peças chegam', () => {
+test('a produção começa com a primeira peça; o lote é regra de saída', () => {
   const flow = live([process('a', 0, 60, { lote: 5 }), process('b', 300, 60)], 500);
-  assert.equal(flow.stations[0].waiting, 4);
+  assert.equal(flow.stations[0].waiting, 0);
   assert.equal(flow.stations[0].processing, 0);
+  assert.equal(flow.stations[0].holding, 4);
   assert.equal(atStation(flow, 1).length, 0);
 });
 
-test('as peças prontas esperam o lote terminar antes de seguir', () => {
+test('o lote inteiro sai junto assim que a quinta peça fica pronta', () => {
   const flow = live([process('a', 0, 60, { lote: 5 }), process('b', 300, 60)], 830);
-  assert.equal(flow.stations[0].holding, 4);
+  // Lote 1 saiu aos 600 s; no processo a já estão a 6ª (pronta) e a 7ª (em produção).
+  assert.equal(flow.stations[0].holding, 1);
   assert.equal(flow.stations[0].processing, 1);
-  assert.equal(flow.units.filter((unit) => unit.stage.station === 1).length, 0);
+  assert.equal(atStation(flow, 1).length, 3);
+  assert.equal(flow.stations[1].processing, 1);
+  assert.equal(flow.stations[1].waiting, 2);
 });
 
-test('o lote inteiro chega junto ao processo seguinte', () => {
-  const flow = live([process('a', 0, 60, { lote: 5 }), process('b', 300, 60)], 910);
+test('o processo seguinte recebe o lote de uma vez e o consome peça a peça', () => {
+  const flow = live([process('a', 0, 60, { lote: 5 }), process('b', 300, 60)], 700);
   assert.equal(flow.stations[1].processing, 1);
   assert.equal(flow.stations[1].waiting, 4);
+  assert.equal(flow.stations[0].holding, 0);
 });
 
 test('o campo Lote de produção sozinho ativa a produção em lotes em todos os processos', () => {
@@ -52,8 +57,8 @@ test('o gargalo forma fila, mas o fluxo continua no ritmo dele', () => {
   assert.equal(flow.stations[0].waiting, 0);
 });
 
-test('dentro do lote o operador faz uma peça por vez e as acumula no buffer de saída', () => {
-  const flow = live([process('a', 0, 60, { lote: 5 }), process('b', 300, 60)], 700);
+test('as peças prontas se acumulam no buffer de saída enquanto o lote não fecha', () => {
+  const flow = live([process('a', 0, 60, { lote: 5 }), process('b', 300, 60)], 910);
   assert.equal(flow.stations[0].processing, 1);
   assert.equal(flow.stations[0].holding, 2);
 });

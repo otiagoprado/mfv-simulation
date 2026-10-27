@@ -37,12 +37,12 @@ test('lote de produção 1 é fluxo contínuo e não adiciona atraso de lote', (
   assert.equal(batchLeadTime(settings, 120).totalSec, 0);
 });
 
-test('atraso por lote soma formação, setup e lote de transferência', () => {
+test('atraso por lote soma espera na saída e setup', () => {
   const settings = batchSettings({ data: { tc: 60, setup: 5, lote: 10 } });
   const lead = batchLeadTime(settings, 120);
   assert.equal(settings.transferBatch, 10);
   assert.equal(lead.formationSec, 9 * 120);
-  assert.equal(lead.processingSec, 5 * 60 + 9 * 60);
+  assert.equal(lead.processingSec, 5 * 60);
   assert.equal(lead.totalSec, lead.formationSec + lead.processingSec);
 });
 
