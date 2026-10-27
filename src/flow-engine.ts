@@ -343,6 +343,48 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
   };
 }
 
+/** Tempo de deslocamento entre dois processos na simulação ao vivo. */
+export const LIVE_TRANSIT_SEC = 60;
+
+export type LiveUnitStage =
+  /** A caminho do processo `station` (ou do cliente, quando `station` é o número de processos). */
+  | { kind: 'transit'; station: number; progress: number }
+  /** Na fila do processo, esperando a vez ou o lote completar. */
+  | { kind: 'queue'; station: number; position: number }
+  /** Em setup ou sendo produzida no processo. */
+  | { kind: 'processing'; station: number; position: number }
+  /** Pronta, esperando o restante do lote de transferência para seguir. */
+  | { kind: 'holding'; station: number; position: number };
+
+export interface LiveUnit {
+  index: number;
+  packIndex: number;
+  product: HeijunkaSlot;
+  stage: LiveUnitStage;
+}
+
+export interface LiveStationState {
+  id: string;
+  waiting: number;
+  processing: number;
+  holding: number;
+}
+
+interface LiveStation {
+  id: string;
+  batchMode: boolean;
+  batchSize: number;
+  transferBatch: number;
+  setupSec: number;
+  runSec: number;
+  unitSec: number;
+}
+
+/**
+ * Simula o dia peça a peça: cada peça é liberada no ritmo programado, atravessa os processos
+ * em ordem (fila única por processo) e respeita a fabricação por lotes. Devolve onde cada peça
+ * está em `elapsedSec` e os totais exibidos no painel da simulação.
+ */
 export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasSimulation>, assumptions: ScenarioAssumptions, elapsedSec: number) {
   const availableSeconds = assumptions.availableMinutesPerDay * 60;
   const pacemakerInterval = simulation.pacemakerMetric?.capacityPerDay && Number.isFinite(simulation.pacemakerMetric.capacityPerDay)
@@ -364,28 +406,113 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   }
   const demandedPacks = demandedBatches.length;
   const demanded = demandedBatches.reduce((sum, batch) => sum + batch.packSize, 0);
-  const completionInterval = simulation.bottleneckCapacity > 0
-    ? availableSeconds / simulation.bottleneckCapacity
-    : Infinity;
-  const nominalLeadSec = simulation.processMetrics.reduce((sum, metric) => sum + metric.effectiveCycleSec, 0)
-    + simulation.waitingTimeMin * 60
-    + simulation.batchLeadTimeSec;
-  const potentialCompleted = Number.isFinite(completionInterval) && elapsedSec >= nominalLeadSec
-    ? Math.floor((elapsedSec - nominalLeadSec) / completionInterval) + 1
-    : 0;
-  const allowedInFlow = simulation.pullSystemActive ? simulation.pullWipLimit : Infinity;
-  const maxAllowed = potentialCompleted + allowedInFlow;
-  const launchedBatches: typeof demandedBatches = [];
-  let launched = 0;
-  for (const batch of demandedBatches) {
-    if (Number.isFinite(maxAllowed) && launched + batch.packSize > maxAllowed) break;
-    const pullReleaseTime = simulation.pullSystemActive && launched >= simulation.pullWipLimit
-      ? nominalLeadSec + (launched - simulation.pullWipLimit) * completionInterval
-      : batch.releaseTime;
-    launchedBatches.push({ ...batch, releaseTime: Math.max(batch.releaseTime, pullReleaseTime) });
-    launched += batch.packSize;
+  const stations: LiveStation[] = simulation.processMetrics.map((metric) => ({
+    id: metric.element.id,
+    batchMode: metric.batch.mode === 'lote',
+    batchSize: metric.batch.batchSize,
+    transferBatch: metric.batch.transferBatch,
+    setupSec: metric.batch.setupMin * 60,
+    runSec: metric.batch.runCycleSec,
+    unitSec: metric.effectiveCycleSec,
+  }));
+  const finalLegSec = LIVE_TRANSIT_SEC * 2 + simulation.waitingTimeMin * 60;
+  const units = demandedBatches.flatMap((batch) => Array.from({ length: batch.packSize }, () => batch));
+  const scheduled = units.map((batch) => batch.releaseTime);
+  const wipLimit = simulation.pullSystemActive ? Math.max(1, simulation.pullWipLimit) : Infinity;
+
+  // Linha do tempo de cada peça em cada processo: chegada, início, fim da produção e saída.
+  const runTimeline = (release: number[]) => {
+    const arrival: number[][] = [];
+    const start: number[][] = [];
+    const finish: number[][] = [];
+    const depart: number[][] = [];
+    stations.forEach((station, stationIndex) => {
+      const previous = stationIndex === 0 ? release : depart[stationIndex - 1];
+      const stationArrival = previous.map((time) => time + LIVE_TRANSIT_SEC);
+      const stationStart = units.map(() => Infinity);
+      const stationFinish = units.map(() => Infinity);
+      const stationDepart = units.map(() => Infinity);
+      let freeAt = 0;
+      if (!station.batchMode) {
+        units.forEach((_, unit) => {
+          if (!Number.isFinite(stationArrival[unit])) return;
+          stationStart[unit] = Math.max(stationArrival[unit], freeAt);
+          stationFinish[unit] = stationStart[unit] + station.unitSec;
+          stationDepart[unit] = stationFinish[unit];
+          freeAt = stationFinish[unit];
+        });
+      } else {
+        for (let first = 0; first + station.batchSize <= units.length; first += station.batchSize) {
+          const members = Array.from({ length: station.batchSize }, (_, offset) => first + offset);
+          const lastArrival = Math.max(...members.map((unit) => stationArrival[unit]));
+          if (!Number.isFinite(lastArrival)) break;
+          // O lote só começa com todas as peças na entrada; o setup ocupa o processo antes da produção.
+          const batchStart = Math.max(lastArrival, freeAt);
+          const runStart = batchStart + station.setupSec;
+          members.forEach((unit, offset) => {
+            stationStart[unit] = batchStart;
+            stationFinish[unit] = runStart + (offset + 1) * station.runSec;
+          });
+          // Cada lote de transferência segue junto quando a última peça dele fica pronta.
+          for (let group = 0; group < members.length; group += station.transferBatch) {
+            const groupMembers = members.slice(group, group + station.transferBatch);
+            const groupReady = stationFinish[groupMembers[groupMembers.length - 1]];
+            groupMembers.forEach((unit) => { stationDepart[unit] = groupReady; });
+          }
+          freeAt = runStart + station.batchSize * station.runSec;
+        }
+      }
+      arrival.push(stationArrival);
+      start.push(stationStart);
+      finish.push(stationFinish);
+      depart.push(stationDepart);
+    });
+    const lastDepart = stations.length ? depart[stations.length - 1] : release;
+    const exit = lastDepart.map((time) => time + finalLegSec);
+    return { arrival, start, finish, depart, exit };
+  };
+
+  // No sistema puxado, uma peça só é liberada quando outra sai e abre espaço no limite de WIP.
+  let release = [...scheduled];
+  let timeline = runTimeline(release);
+  if (Number.isFinite(wipLimit)) {
+    for (let pass = 0; pass < 30; pass += 1) {
+      const gated = scheduled.map((time, unit) => unit >= wipLimit ? Math.max(time, timeline.exit[unit - wipLimit]) : time);
+      if (gated.every((time, unit) => time === release[unit])) break;
+      release = gated;
+      timeline = runTimeline(release);
+    }
   }
-  const completed = Math.min(launched, potentialCompleted);
+
+  const launchedUnits = units.map((_, unit) => unit).filter((unit) => release[unit] <= elapsedSec);
+  const launchedBatches = demandedBatches.filter((batch) => units.some((candidate, unit) => candidate === batch && release[unit] <= elapsedSec));
+  const stationStates: LiveStationState[] = stations.map((station) => ({ id: station.id, waiting: 0, processing: 0, holding: 0 }));
+  const liveUnits: LiveUnit[] = [];
+  let completed = 0;
+  launchedUnits.forEach((unit) => {
+    if (timeline.exit[unit] <= elapsedSec) {
+      completed += 1;
+      return;
+    }
+    let stage: LiveUnitStage | null = null;
+    for (let station = 0; station < stations.length && !stage; station += 1) {
+      const leftAt = station === 0 ? release[unit] : timeline.depart[station - 1][unit];
+      const arrival = timeline.arrival[station][unit];
+      if (elapsedSec < arrival) stage = { kind: 'transit', station, progress: (elapsedSec - leftAt) / Math.max(1, arrival - leftAt) };
+      else if (elapsedSec < timeline.start[station][unit]) stage = { kind: 'queue', station, position: stationStates[station].waiting++ };
+      else if (elapsedSec < timeline.finish[station][unit]) stage = { kind: 'processing', station, position: stationStates[station].processing++ };
+      else if (elapsedSec < timeline.depart[station][unit]) stage = { kind: 'holding', station, position: stationStates[station].holding++ };
+    }
+    if (!stage) {
+      const leftAt = stations.length ? timeline.depart[stations.length - 1][unit] : release[unit];
+      stage = { kind: 'transit', station: stations.length, progress: (elapsedSec - leftAt) / Math.max(1, timeline.exit[unit] - leftAt) };
+    }
+    const batch = units[unit];
+    liveUnits.push({ index: unit, packIndex: batch.batchIndex, product: batch.product, stage });
+  });
+
+  const launched = launchedUnits.length;
+  const completionInterval = simulation.bottleneckCapacity > 0 ? availableSeconds / simulation.bottleneckCapacity : Infinity;
   return {
     releaseInterval: demandedBatches[demandedBatches.length - 1]?.interval ?? Math.max(simulation.pitchTimeSec, pacemakerInterval * packSize),
     packSize,
@@ -398,6 +525,7 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     wip: Math.max(0, launched - completed),
     blocked: Math.max(0, demanded - launched),
     completionInterval,
-    nominalLeadSec,
+    units: liveUnits,
+    stations: stationStates,
   };
 }

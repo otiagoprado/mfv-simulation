@@ -1286,22 +1286,48 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
   });
   const route = centers;
   const liveFlow = calculateLiveFlow(simulation, canvas.assumptions, elapsedSec);
-  const availableSeconds = canvas.assumptions.availableMinutesPerDay * 60;
-  const nominalLeadSec = Math.max(20,
-    liveFlow.nominalLeadSec
-      + route.length * 15,
-  );
-  const releasedUnits = liveFlow.launchedBatches.flatMap((batch) => Array.from({ length: batch.packSize }, (_, unitInPack) => ({ ...batch, unitInPack })));
-  const firstVisible = Math.max(0, releasedUnits.length - 18);
-  const tokens = releasedUnits.slice(firstVisible).map((unit, offset) => {
-    const index = firstVisible + offset;
-    const releaseTime = unit.releaseTime;
-    const age = Math.max(0, elapsedSec - releaseTime);
-    const progress = Math.min(1, age / nominalLeadSec);
-    const point = pointAlongRoute(route, progress);
-    const truck = truckCenters.find((center) => Math.hypot(point.x - center.x, point.y - center.y) < 58);
-    return { index, packIndex: unit.batchIndex, product: unit.product, progress, point, truckId: truck?.id };
-  }).filter((token) => token.progress < 1);
+  const stationBoxes = simulation.processMetrics.map((metric) => {
+    const size = elementDimensions(metric.element);
+    return { left: metric.element.x, top: metric.element.y, right: metric.element.x + size.width, cx: metric.element.x + size.width / 2, cy: metric.element.y + size.height / 2 };
+  });
+  // Trechos percorridos entre a entrada, cada processo e o cliente; o primeiro e o último seguem o traçado do mapa.
+  const routeIndexOf = (id?: string) => stageElements.findIndex((element) => element.id === id);
+  const firstRouteIndex = routeIndexOf(simulation.processMetrics[0]?.element.id);
+  const lastRouteIndex = routeIndexOf(simulation.processMetrics[simulation.processMetrics.length - 1]?.element.id);
+  const legPoints = (station: number) => {
+    if (station === 0) return firstRouteIndex > 0 ? route.slice(0, firstRouteIndex + 1) : [route[0], { x: stationBoxes[0].cx, y: stationBoxes[0].cy }];
+    if (station >= stationBoxes.length) {
+      const last = stationBoxes[stationBoxes.length - 1];
+      return lastRouteIndex >= 0 ? route.slice(lastRouteIndex) : [{ x: last.cx, y: last.cy }, route[route.length - 1]];
+    }
+    const from = stationBoxes[station - 1];
+    const to = stationBoxes[station];
+    return [{ x: from.cx, y: from.cy }, { x: to.cx, y: to.cy }];
+  };
+  const STACK_COLUMNS = 3;
+  const STACK_VISIBLE = 12;
+  const tokens = liveFlow.units.slice(0, 160).flatMap((unit) => {
+    const { stage } = unit;
+    const box = stationBoxes[stage.station];
+    let point: { x: number; y: number };
+    let scale = 1;
+    if (stage.kind === 'transit') point = pointAlongRoute(legPoints(stage.station), Math.min(1, Math.max(0, stage.progress)));
+    else if (stage.position >= STACK_VISIBLE) return [];
+    else if (stage.kind === 'processing') {
+      const count = Math.min(STACK_VISIBLE, liveFlow.stations[stage.station].processing);
+      point = { x: box.cx + (stage.position - (count - 1) / 2) * 17, y: box.cy };
+      scale = 0.65;
+    } else {
+      const column = stage.position % STACK_COLUMNS;
+      const row = Math.floor(stage.position / STACK_COLUMNS);
+      point = stage.kind === 'queue'
+        ? { x: box.left - 14 - column * 15, y: box.top + 26 + row * 15 }
+        : { x: box.right + 14 + column * 15, y: box.top + 26 + row * 15 };
+      scale = 0.55;
+    }
+    const truck = stage.kind === 'transit' ? truckCenters.find((center) => Math.hypot(point.x - center.x, point.y - center.y) < 58) : undefined;
+    return [{ index: unit.index, packIndex: unit.packIndex, product: unit.product, point, scale, moving: stage.kind === 'transit', truckId: truck?.id }];
+  });
   const loadingTruckIds = new Set(tokens.map((token) => token.truckId).filter(Boolean));
   const bottleneckMetric = simulation.processMetrics.find((metric) => metric.element.id === simulation.bottleneck?.id);
   const guidance = bottleneckMetric?.overloaded ? bottleneckGuidance(bottleneckMetric, canvas.assumptions) : null;
@@ -1330,12 +1356,9 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
           <text x={45} y={15} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="white">CARREGANDO</text>
         </g>
       </g>)}
-      {simulation.processMetrics.map((metric) => {
+      {simulation.processMetrics.map((metric, station) => {
         const size = elementDimensions(metric.element);
-        const serviceRate = metric.capacityPerDay / availableSeconds;
-        const arrivalRate = 1 / simulation.taktTimeSec;
-        const rawQueue = Math.max(0, Math.floor(elapsedSec * (arrivalRate - serviceRate)));
-        const queue = simulation.pullSystemActive ? Math.min(rawQueue, simulation.pullWipLimit) : rawQueue;
+        const queue = liveFlow.stations[station]?.waiting ?? 0;
         const critical = metric.overloaded || queue > 0;
         return <g key={`live-${metric.element.id}`}>
           <rect x={metric.element.x - 7} y={metric.element.y - 27} width={size.width + 14} height={size.height + 34} rx={9}
@@ -1367,12 +1390,12 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
           </g>
         </g>;
       })()}
-      {tokens.map((token) => <g key={token.index} transform={`translate(${token.point.x},${token.point.y})`} className={`live-product-token ${token.truckId ? 'inside-truck' : ''}`}>
+      {tokens.map((token) => <g key={token.index} transform={`translate(${token.point.x},${token.point.y}) scale(${token.scale})`} className={`live-product-token ${token.truckId ? 'inside-truck' : ''}`}>
         <path d="M-13,-7 L0,-13 L13,-7 L0,-1 Z" fill={token.product?.color ?? canvas.themeColor} stroke="#23415a" strokeWidth={1.2}/>
         <path d="M-13,-7 V8 L0,14 V-1 Z" fill="white" stroke="#23415a" strokeWidth={1.2}/>
         <path d="M13,-7 V8 L0,14 V-1 Z" fill={token.product?.color ?? '#dcecff'} fillOpacity={0.22} stroke="#23415a" strokeWidth={1.2}/>
         <path d="M0,-13 V-1" stroke="#23415a" strokeWidth={1}/>
-        <text x={0} y={-18} textAnchor="middle" fontSize={7} fontWeight="800" fontFamily="Arial" fill="#34383e">{token.product?.code ?? 'P1'} · CX {token.packIndex + 1}</text>
+        {token.moving && <text x={0} y={-18} textAnchor="middle" fontSize={7} fontWeight="800" fontFamily="Arial" fill="#34383e">{token.product?.code ?? 'P1'} · CX {token.packIndex + 1}</text>}
       </g>)}
     </g>
   );
