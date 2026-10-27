@@ -28,6 +28,7 @@ import {
   DEFAULT_ASSUMPTIONS, KANBAN_CONTROL_KINDS, LIVE_MAX_DAYS,
   buildLeveledSequence, calculateCanvasSimulation, calculateKanbanSizing, calculateLiveFlow, calculateScenario,
   defaultElementDimensions, elementDimensions, nearestProcess, normalizedProductMix, positiveNumber,
+  type LiveUnit,
 } from './flow-engine';
 import { materialFlowOrder } from './flow-order';
 import { percentValue } from './numbers';
@@ -1317,12 +1318,33 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
   };
   const STACK_COLUMNS = 4;
   const STACK_VISIBLE = 12;
+  // Peças de um mesmo lote viajam juntas: contam quantas dividem o mesmo ponto do trajeto para desenhá-las como uma pilha.
+  const transitKey = (stage: LiveUnit['stage']) => stage.kind === 'transit' ? `${stage.station}:${Math.round(stage.progress * 1000)}` : '';
+  const transitGroups = new Map<string, number>();
+  liveFlow.units.slice(0, 160).forEach((unit) => {
+    const key = transitKey(unit.stage);
+    if (key) transitGroups.set(key, (transitGroups.get(key) ?? 0) + 1);
+  });
+  const transitSeen = new Map<string, number>();
   const tokens = liveFlow.units.slice(0, 160).flatMap((unit) => {
     const { stage } = unit;
     const box = stationBoxes[stage.station];
     let point: { x: number; y: number };
     let scale = 1;
-    if (stage.kind === 'transit') point = pointAlongRoute(legPoints(stage.station), Math.min(1, Math.max(0, stage.progress)));
+    if (stage.kind === 'transit') {
+      point = pointAlongRoute(legPoints(stage.station), Math.min(1, Math.max(0, stage.progress)));
+      const key = transitKey(stage);
+      const groupSize = transitGroups.get(key) ?? 1;
+      if (groupSize > 1) {
+        const slot = transitSeen.get(key) ?? 0;
+        transitSeen.set(key, slot + 1);
+        if (slot >= STACK_VISIBLE) return [];
+        const column = slot % 3;
+        const row = Math.floor(slot / 3);
+        point = { x: point.x - 11 + column * 11, y: point.y + 6 - row * 9 };
+        scale = 0.55;
+      }
+    }
     else if (stage.position >= STACK_VISIBLE) return [];
     else if (stage.kind === 'processing') {
       const count = Math.min(STACK_VISIBLE, liveFlow.stations[stage.station].processing);
