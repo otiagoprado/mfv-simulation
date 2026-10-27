@@ -341,6 +341,7 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
     routeReady: Boolean(rawMaterialEntry && finalCustomer),
     productionRouteElements,
   };
+}
 
 export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasSimulation>, assumptions: ScenarioAssumptions, elapsedSec: number) {
   const availableSeconds = assumptions.availableMinutesPerDay * 60;
