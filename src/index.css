@@ -952,3 +952,4 @@ g:hover > .edit-btn-group { opacity: 1; }
   .stress-failure-process { grid-column: span 2; }
   .stress-result-hero { align-items: flex-start; flex-direction: column; }
 }
+.stress-flow-order { margin-top: 4px; color: #5b3fa0; font-size: 11px; font-weight: 650; }

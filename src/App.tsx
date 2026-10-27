@@ -24,6 +24,12 @@ import { exportJPEG, exportPDF, exportSVG, type PaperSize } from './export';
 import { cloneCanvas, syncCanvasForward } from './canvas-sync';
 import { runStressTest, type StressTestSettings } from './stress-test';
 import { batchLeadTime, batchSettings } from './batch';
+import {
+  DEFAULT_ASSUMPTIONS, KANBAN_CONTROL_KINDS,
+  buildLeveledSequence, calculateCanvasSimulation, calculateKanbanSizing, calculateLiveFlow, calculateScenario,
+  defaultElementDimensions, elementDimensions, nearestProcess, normalizedProductMix, positiveNumber,
+} from './flow-engine';
+import { materialFlowOrder } from './flow-order';
 import { percentValue } from './numbers';
 import type { Scenario } from './types';
 import truckThreeQuarter from './assets/truck-three-quarter.png';
@@ -47,7 +53,6 @@ const TINTABLE_ASSET_KINDS: ElementKind[] = [
 ];
 type ActiveKind = 'current' | 'future';
 type ScenarioPreset = 'current' | 'demand-up' | 'demand-down' | 'setup-half' | 'availability-up' | 'bottleneck-resource' | 'quality-up' | 'one-piece-flow';
-const KANBAN_CONTROL_KINDS: ElementKind[] = ['kanban-production','kanban-withdrawal','signal-kanban','kanban-post'];
 
 interface FutureVariant {
   id: string;
@@ -69,345 +74,10 @@ function cloneWorkspace(workspace: CanvasWorkspace): CanvasWorkspace {
   };
 }
 
-interface HeijunkaSlot {
-  productId: string;
-  name: string;
-  code: string;
-  color: string;
-  packSize: number;
-  pitchTimeSec: number;
-}
-
-const PRODUCT_SEQUENCE_COLORS = ['#2f80ed','#f2994a','#27ae60','#9b51e0','#eb5757','#00a6a6','#c08b00','#536d8c'];
-
 function validThemeColor(value: unknown) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : DEFAULT_THEME_COLOR;
 }
 
-function defaultElementDimensions(element: Pick<CanvasElement, 'kind'>) {
-  if (element.kind === 'identification') return { width: 390, height: 100 };
-  if (element.kind === 'planning') return { width: 190, height: 170 };
-  const item = LIBRARY.find((candidate) => candidate.kind === element.kind);
-  return { width: item?.w || 120, height: item?.h || 80 };
-}
-
-function elementDimensions(element: CanvasElement) {
-  const defaults = defaultElementDimensions(element);
-  return {
-    width: Math.min(1200, Math.max(30, Number(element.data.width) || defaults.width)),
-    height: Math.min(800, Math.max(30, Number(element.data.height) || defaults.height)),
-  };
-}
-
-const DEFAULT_ASSUMPTIONS: ScenarioAssumptions = {
-  monthlyDemand: 5,
-  workdaysPerMonth: 21,
-  availableMinutesPerDay: 558,
-  productMix: [{ id: 'product-base', name: 'Produto principal', monthlyDemand: 5, packSize: 1 }],
-};
-
-function positiveNumber(value: unknown, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizedProductMix(value: unknown, fallbackDemand: number): ProductMixItem[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    return [{ id: 'product-base', name: 'Produto principal', monthlyDemand: fallbackDemand, packSize: 1 }];
-  }
-  const normalized = value.map((item, index) => {
-    const candidate = item as Partial<ProductMixItem>;
-    return {
-      id: typeof candidate.id === 'string' && candidate.id ? candidate.id : `product-${index + 1}-${makeId()}`,
-      name: typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : `Produto ${index + 1}`,
-      monthlyDemand: Math.max(0, Number(candidate.monthlyDemand) || 0),
-      packSize: Math.max(1, Math.round(Number(candidate.packSize) || 1)),
-    };
-  });
-  return normalized;
-}
-
-function calculateScenario(assumptions: ScenarioAssumptions) {
-  const productMix = normalizedProductMix(assumptions.productMix, assumptions.monthlyDemand);
-  const monthlyDemand = productMix.reduce((sum, item) => sum + item.monthlyDemand, 0);
-  const dailyDemand = monthlyDemand / assumptions.workdaysPerMonth;
-  const taktTimeSec = dailyDemand > 0
-    ? (assumptions.availableMinutesPerDay * 60) / dailyDemand
-    : 0;
-  const weightedPackSize = monthlyDemand > 0
-    ? productMix.reduce((sum, item) => sum + item.packSize * item.monthlyDemand, 0) / monthlyDemand
-    : 1;
-  const pitchTimeSec = taktTimeSec * weightedPackSize;
-  const productMetrics = productMix.map((item) => ({
-    ...item,
-    share: monthlyDemand > 0 ? item.monthlyDemand / monthlyDemand : 0,
-    dailyDemand: item.monthlyDemand / assumptions.workdaysPerMonth,
-    pitchTimeSec: taktTimeSec * item.packSize,
-  }));
-  return { monthlyDemand, dailyDemand, taktTimeSec, weightedPackSize, pitchTimeSec, productMetrics };
-}
-
-function buildLeveledSequence(productMetrics: ReturnType<typeof calculateScenario>['productMetrics']) {
-  const active = productMetrics.filter((item) => item.monthlyDemand > 0).map((item, index) => ({
-    ...item,
-    code: `P${index + 1}`,
-    color: PRODUCT_SEQUENCE_COLORS[index % PRODUCT_SEQUENCE_COLORS.length],
-    packsPerDay: item.packSize > 0 ? item.dailyDemand / item.packSize : 0,
-    assigned: 0,
-  }));
-  const totalPacksPerDay = active.reduce((sum, item) => sum + item.packsPerDay, 0);
-  if (!active.length || totalPacksPerDay <= 0) return { slots: [] as HeijunkaSlot[], totalPacksPerDay: 0 };
-  const slotCount = Math.min(24, Math.max(active.length, Math.ceil(totalPacksPerDay)));
-  const slots: HeijunkaSlot[] = [];
-  for (let slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
-    const selected = active.reduce((best, item) => {
-      const deficit = (item.packsPerDay / totalPacksPerDay) * (slotIndex + 1) - item.assigned;
-      const bestDeficit = (best.packsPerDay / totalPacksPerDay) * (slotIndex + 1) - best.assigned;
-      return deficit > bestDeficit ? item : best;
-    }, active[0]);
-    selected.assigned += 1;
-    slots.push({ productId: selected.id, name: selected.name, code: selected.code, color: selected.color, packSize: selected.packSize, pitchTimeSec: selected.pitchTimeSec });
-  }
-  return { slots, totalPacksPerDay };
-}
-
-function calculateKanbanSizing(element: CanvasElement, assumptions: ScenarioAssumptions) {
-  const scenario = calculateScenario(assumptions);
-  const productId = String(element.data.productId ?? '');
-  const product = scenario.productMetrics.find((item) => item.id === productId);
-  const dailyDemand = product?.dailyDemand ?? scenario.dailyDemand;
-  const inheritedPackSize = product?.packSize ?? Math.max(1, Math.round(scenario.weightedPackSize));
-  const packSize = Math.max(1, Math.round(Number(element.data.packSize) || inheritedPackSize));
-  const replenishmentMin = Math.max(0, Number(element.data.replenishmentMin) || 0);
-  const safetyPercent = Math.max(0, Number(element.data.safetyPercent) || 0);
-  const demandDuringReplenishment = assumptions.availableMinutesPerDay > 0
-    ? dailyDemand * (replenishmentMin / assumptions.availableMinutesPerDay)
-    : 0;
-  const protectedDemand = demandDuringReplenishment * (1 + safetyPercent / 100);
-  const recommendedCards = protectedDemand > 0 ? Math.ceil(protectedDemand / packSize) : 0;
-  const cards = Math.max(0, Math.floor(Number(element.data.qty) || 0));
-  return {
-    productId,
-    productName: product?.name ?? 'Mix total',
-    dailyDemand,
-    packSize,
-    replenishmentMin,
-    safetyPercent,
-    demandDuringReplenishment,
-    recommendedCards,
-    recommendedUnits: recommendedCards * packSize,
-    cards,
-    authorizedUnits: cards * packSize,
-  };
-}
-
-function calculateProcessLoad(element: CanvasElement, dailyDemand: number, cumulativeYield: number, availableMinutesPerDay: number) {
-  const cycleTime = Math.max(0, Number(element.data.tc) || 0);
-  const setupPerUnit = (Math.max(0, Number(element.data.setup) || 0) * 60)
-    / Math.max(1, Number(element.data.lote) || 1);
-  const resources = Math.max(1, Number(element.data.recurso) || 1);
-  const availability = Math.min(100, Math.max(1, percentValue(element.data.disp))) / 100;
-  const effectiveCycleSec = (cycleTime + setupPerUnit) / (resources * availability);
-  const rawCapacityPerDay = effectiveCycleSec > 0
-    ? (availableMinutesPerDay * 60) / effectiveCycleSec
-    : Infinity;
-  const requiredInputPerDay = cumulativeYield > 0 ? dailyDemand / cumulativeYield : Infinity;
-  const capacityPerDay = rawCapacityPerDay * cumulativeYield;
-  const loadPercent = rawCapacityPerDay > 0 && Number.isFinite(requiredInputPerDay)
-    ? (requiredInputPerDay / rawCapacityPerDay) * 100
-    : 0;
-  const valid = cycleTime > 0;
-  return { effectiveCycleSec, loadPercent, valid, overloaded: valid && loadPercent > 100, capacityPerDay, requiredInputPerDay };
-}
-
-function nearestProcess(marker: CanvasElement, processes: CanvasElement[]) {
-  if (!processes.length) return undefined;
-  const markerSize = elementDimensions(marker);
-  const markerCenter = { x: marker.x + markerSize.width / 2, y: marker.y + markerSize.height / 2 };
-  return processes.reduce((nearest, process) => {
-    const processSize = elementDimensions(process);
-    const distance = Math.hypot(
-      markerCenter.x - (process.x + processSize.width / 2),
-      markerCenter.y - (process.y + processSize.height / 2),
-    );
-    return !nearest || distance < nearest.distance ? { process, distance } : nearest;
-  }, undefined as { process: CanvasElement; distance: number } | undefined)?.process;
-}
-
-function calculateCanvasSimulation(canvas: CanvasState) {
-  const scenario = calculateScenario(canvas.assumptions);
-  const leveling = buildLeveledSequence(scenario.productMetrics);
-  const { dailyDemand, taktTimeSec } = scenario;
-  const rawMaterialEntry = canvas.elements
-    .filter((element) => element.kind === 'raw-material')
-    .sort((a, b) => a.x - b.x)[0];
-  const finalCustomer = canvas.elements
-    .filter((element) => element.kind === 'customer')
-    .sort((a, b) => b.x - a.x)[0];
-  const routeKinds: ElementKind[] = [
-    'warehouse','inventory','safety-stock','buffer','supermarket','fifo','process','shared-process','waiting-time',
-    'finished-goods','shipping-point','truck','transport-air','transport-ship','forklift','milk-run',
-  ];
-  const routeStartX = rawMaterialEntry ? rawMaterialEntry.x + elementDimensions(rawMaterialEntry).width / 2 : 0;
-  const routeEndX = finalCustomer ? finalCustomer.x + elementDimensions(finalCustomer).width / 2 : 0;
-  const productionRouteElements = rawMaterialEntry && finalCustomer
-    ? [
-        rawMaterialEntry,
-        ...canvas.elements
-          .filter((element) => routeKinds.includes(element.kind))
-          .filter((element) => {
-            const centerX = element.x + elementDimensions(element).width / 2;
-            return centerX >= Math.min(routeStartX, routeEndX) && centerX <= Math.max(routeStartX, routeEndX);
-          })
-          .sort((a, b) => routeStartX <= routeEndX ? a.x - b.x : b.x - a.x),
-        finalCustomer,
-      ]
-    : [];
-  const processElements = canvas.elements
-    .filter((element) => ['process','shared-process'].includes(element.kind))
-    .sort((a, b) => a.x - b.x);
-  let cumulativeYield = 1;
-  const processMetrics = [...processElements].reverse().map((element) => {
-    const quality = Math.min(100, Math.max(0.1, percentValue(element.data.qualidade))) / 100;
-    cumulativeYield *= quality;
-    const batch = batchSettings(element);
-    return {
-      element,
-      quality,
-      batch,
-      batchLead: batchLeadTime(batch, taktTimeSec),
-      ...calculateProcessLoad(element, dailyDemand, cumulativeYield, canvas.assumptions.availableMinutesPerDay),
-    };
-  }).reverse();
-  const batchProcessCount = processMetrics.filter((metric) => metric.batch.mode === 'lote').length;
-  const batchLeadTimeSec = processMetrics.reduce((sum, metric) => sum + metric.batchLead.totalSec, 0);
-  const batchLeadTimeDays = canvas.assumptions.availableMinutesPerDay > 0
-    ? batchLeadTimeSec / (canvas.assumptions.availableMinutesPerDay * 60)
-    : 0;
-  const finiteCapacities = processMetrics.map((metric) => metric.capacityPerDay).filter(Number.isFinite);
-  const bottleneckCapacity = finiteCapacities.length ? Math.min(...finiteCapacities) : 0;
-  const bottleneck = processMetrics.find((metric) => metric.capacityPerDay === bottleneckCapacity)?.element;
-  const pacemakerMarkers = canvas.elements.filter((element) => element.kind === 'pacemaker');
-  const pacemakerMarker = pacemakerMarkers[0];
-  const linkedPacemaker = pacemakerMarker
-    ? processElements.find((element) => element.id === pacemakerMarker.data.processId)
-      ?? nearestProcess(pacemakerMarker, processElements)
-    : undefined;
-  const pacemakerMetric = processMetrics.find((metric) => metric.element.id === linkedPacemaker?.id);
-  const pacemakerSetupSec = Math.max(0, Number(linkedPacemaker?.data.setup) || 0) * 60;
-  const availableSeconds = canvas.assumptions.availableMinutesPerDay * 60;
-  const pacemakerResources = Math.max(1, Number(linkedPacemaker?.data.recurso) || 1);
-  const pacemakerAvailability = Math.min(100, Math.max(1, percentValue(linkedPacemaker?.data.disp))) / 100;
-  const pacemakerRunSecPerDay = linkedPacemaker
-    ? (Math.max(0, Number(linkedPacemaker.data.tc) || 0) / (pacemakerResources * pacemakerAvailability)) * dailyDemand
-    : 0;
-  const setupCapacitySecPerDay = Math.max(0, availableSeconds - pacemakerRunSecPerDay);
-  const activeProductCount = scenario.productMetrics.filter((item) => item.monthlyDemand > 0).length;
-  const mixChangeovers = activeProductCount > 1 ? activeProductCount : 0;
-  const epeiDays = mixChangeovers > 0 && pacemakerSetupSec > 0 && setupCapacitySecPerDay > 0
-    ? (mixChangeovers * pacemakerSetupSec) / setupCapacitySecPerDay
-    : mixChangeovers > 0 && pacemakerSetupSec > 0
-      ? Infinity
-      : 0;
-  const heijunkaBoxes = canvas.elements.filter((element) => element.kind === 'heijunka');
-  const pullBuffers = canvas.elements.filter((element) => ['supermarket','fifo'].includes(element.kind));
-  const kanbanControls = canvas.elements.filter((element) => KANBAN_CONTROL_KINDS.includes(element.kind));
-  const kanbanSizing = kanbanControls.map((element) => ({ element, ...calculateKanbanSizing(element, canvas.assumptions) }));
-  const kanbanCardTotal = kanbanSizing.reduce((sum, sizing) => sum + sizing.cards, 0);
-  const kanbanAuthorizedUnits = kanbanSizing.reduce((sum, sizing) => sum + sizing.authorizedUnits, 0);
-  const configuredPullLimits = [
-    ...pullBuffers.map((element) => Math.floor(Math.max(0, Number(element.data.qty) || 0))),
-    ...kanbanSizing.map((sizing) => sizing.authorizedUnits),
-  ]
-    .filter((quantity) => quantity > 0);
-  const pullWipLimit = configuredPullLimits.length ? Math.min(...configuredPullLimits) : 0;
-  const pullSystemActive = pullBuffers.length > 0 && kanbanControls.length > 0 && pullWipLimit > 0;
-  const leanWarnings: string[] = [];
-  if (!pacemakerMarker) leanWarnings.push('Defina um processo marcapasso.');
-  if (pacemakerMarkers.length > 1) leanWarnings.push('Mantenha somente um marcapasso.');
-  if (pacemakerMarker && !linkedPacemaker) leanWarnings.push('Vincule o marcapasso a um processo.');
-  if (heijunkaBoxes.length > 0 && !linkedPacemaker) leanWarnings.push('O heijunka precisa de um marcapasso válido.');
-  if (pullBuffers.length > 0 && kanbanControls.length === 0) leanWarnings.push('Adicione Kanban ao supermercado ou FIFO.');
-  if (kanbanControls.length > 0 && pullBuffers.length === 0) leanWarnings.push('Adicione supermercado ou FIFO ao circuito Kanban.');
-  if ((pullBuffers.length > 0 || kanbanControls.length > 0) && pullWipLimit === 0) leanWarnings.push('Informe um limite maior que zero no controle puxado.');
-  const stockKinds: ElementKind[] = ['inventory','safety-stock','buffer','supermarket','fifo','waiting-time'];
-  const inventoryElements = canvas.elements
-    .filter((element) => stockKinds.includes(element.kind))
-    .sort((a, b) => a.x - b.x);
-  const physicalInventoryElements = inventoryElements.filter((element) => element.kind !== 'waiting-time');
-  const waitingElements = inventoryElements.filter((element) => element.kind === 'waiting-time');
-  const totalInventory = physicalInventoryElements
-    .reduce((sum, element) => sum + Math.max(0, Number(element.data.qty) || 0), 0);
-  const inventoryDays = dailyDemand > 0 ? totalInventory / dailyDemand : 0;
-  const waitingTimeMin = waitingElements.reduce((sum, element) => sum + Math.max(0, Number(element.data.durationMin) || 0), 0);
-  const waitingLeadTimeDays = canvas.assumptions.availableMinutesPerDay > 0 ? waitingTimeMin / canvas.assumptions.availableMinutesPerDay : 0;
-  const processingTimeMin = processElements.reduce((sum, element) => sum + Math.max(0, Number(element.data.tc) || 0), 0) / 60;
-  const timelineItems = [
-    ...processElements.map((element) => {
-      const size = elementDimensions(element);
-      return {
-        id: element.id,
-        type: 'process' as const,
-        x: element.x + size.width / 2,
-        width: size.width,
-        value: Math.max(0, Number(element.data.tc) || 0) / 60,
-      };
-    }),
-    ...inventoryElements.map((element) => {
-      const size = elementDimensions(element);
-      const value = element.kind === 'waiting-time'
-        ? Math.max(0, Number(element.data.durationMin) || 0) / canvas.assumptions.availableMinutesPerDay
-        : dailyDemand > 0
-          ? Math.max(0, Number(element.data.qty) || 0) / dailyDemand
-          : 0;
-      return { id: element.id, type: 'inventory' as const, x: element.x + size.width / 2, width: size.width, value };
-    }),
-  ].sort((a, b) => a.x - b.x);
-  return {
-    dailyDemand,
-    taktTimeSec,
-    monthlyDemand: scenario.monthlyDemand,
-    productMetrics: scenario.productMetrics,
-    activeProductCount,
-    weightedPackSize: scenario.weightedPackSize,
-    pitchTimeSec: scenario.pitchTimeSec,
-    epeiDays,
-    leveledSequence: leveling.slots,
-    totalPacksPerDay: leveling.totalPacksPerDay,
-    processElements,
-    processMetrics,
-    invalidProcesses: processMetrics.filter((metric) => !metric.valid),
-    overloadedProcesses: processMetrics.filter((metric) => metric.overloaded),
-    bottleneckCapacity,
-    bottleneck,
-    pacemakerMarkers,
-    pacemaker: linkedPacemaker,
-    pacemakerMetric,
-    heijunkaBoxes,
-    pullBuffers,
-    kanbanControls,
-    kanbanSizing,
-    kanbanCardTotal,
-    kanbanAuthorizedUnits,
-    pullWipLimit,
-    pullSystemActive,
-    leanWarnings,
-    inventoryDays,
-    waitingTimeMin,
-    waitingLeadTimeDays,
-    batchProcessCount,
-    batchLeadTimeSec,
-    batchLeadTimeDays,
-    processingTimeMin,
-    leadTimeDays: inventoryDays + waitingLeadTimeDays + batchLeadTimeDays,
-    timelineItems,
-    inventoryElements,
-    rawMaterialEntry,
-    finalCustomer,
-    routeReady: Boolean(rawMaterialEntry && finalCustomer),
-    productionRouteElements,
-  };
-}
 
 type LeanAdviceLevel = 'critical' | 'opportunity' | 'good';
 type LeanAdviceArea = 'fluxo' | 'pull' | 'marcapasso' | 'programacao' | 'kanban' | 'dados';
@@ -740,7 +410,7 @@ function applyLeanFix(canvas: CanvasState, advice: LeanAdvice): CanvasState {
   if (!fix) return canvas;
   const next = cloneCanvas(canvas);
   const findElement = (id?: string) => next.elements.find((element) => element.id === id);
-  const processElements = next.elements.filter((element) => ['process','shared-process'].includes(element.kind)).sort((a, b) => a.x - b.x);
+  const processElements = materialFlowOrder(next.elements, next.arrows).processes;
   const createLibraryElement = (kind: ElementKind, x: number, y: number, label?: string): CanvasElement => {
     const item = LIBRARY.find((candidate) => candidate.kind === kind);
     return { id: `${kind}-${makeId()}`, kind, x, y, label: label ?? item?.defaultLabel ?? kind, data: { ...(item?.defaultData ?? {}) } };
@@ -877,65 +547,6 @@ function applyLeanFix(canvas: CanvasState, advice: LeanAdvice): CanvasState {
   }
   next.arrows = syncAnchoredArrows(next.arrows, next.elements);
   return normalizeCanvas(next);
-}
-
-function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasSimulation>, assumptions: ScenarioAssumptions, elapsedSec: number) {
-  const availableSeconds = assumptions.availableMinutesPerDay * 60;
-  const pacemakerInterval = simulation.pacemakerMetric?.capacityPerDay && Number.isFinite(simulation.pacemakerMetric.capacityPerDay)
-    ? availableSeconds / simulation.pacemakerMetric.capacityPerDay
-    : 0;
-  const packSize = Math.max(1, Math.round(simulation.weightedPackSize));
-  const fallbackSlot: HeijunkaSlot = { productId: 'product-base', name: 'Produto', code: 'P1', color: PRODUCT_SEQUENCE_COLORS[0], packSize, pitchTimeSec: simulation.pitchTimeSec };
-  const sequence = simulation.leveledSequence.length ? simulation.leveledSequence : [fallbackSlot];
-  const demandedBatches: { batchIndex: number; product: HeijunkaSlot; packSize: number; releaseTime: number; interval: number }[] = [];
-  let scheduledTime = 0;
-  let batchIndex = 0;
-  while (scheduledTime <= elapsedSec && scheduledTime < availableSeconds && batchIndex < 2000) {
-    const product = sequence[batchIndex % sequence.length];
-    const interval = Math.max(product.pitchTimeSec, pacemakerInterval * product.packSize);
-    if (!Number.isFinite(interval) || interval <= 0) break;
-    demandedBatches.push({ batchIndex, product, packSize: product.packSize, releaseTime: scheduledTime, interval });
-    scheduledTime += interval;
-    batchIndex += 1;
-  }
-  const demandedPacks = demandedBatches.length;
-  const demanded = demandedBatches.reduce((sum, batch) => sum + batch.packSize, 0);
-  const completionInterval = simulation.bottleneckCapacity > 0
-    ? availableSeconds / simulation.bottleneckCapacity
-    : Infinity;
-  const nominalLeadSec = simulation.processMetrics.reduce((sum, metric) => sum + metric.effectiveCycleSec, 0)
-    + simulation.waitingTimeMin * 60
-    + simulation.batchLeadTimeSec;
-  const potentialCompleted = Number.isFinite(completionInterval) && elapsedSec >= nominalLeadSec
-    ? Math.floor((elapsedSec - nominalLeadSec) / completionInterval) + 1
-    : 0;
-  const allowedInFlow = simulation.pullSystemActive ? simulation.pullWipLimit : Infinity;
-  const maxAllowed = potentialCompleted + allowedInFlow;
-  const launchedBatches: typeof demandedBatches = [];
-  let launched = 0;
-  for (const batch of demandedBatches) {
-    if (Number.isFinite(maxAllowed) && launched + batch.packSize > maxAllowed) break;
-    const pullReleaseTime = simulation.pullSystemActive && launched >= simulation.pullWipLimit
-      ? nominalLeadSec + (launched - simulation.pullWipLimit) * completionInterval
-      : batch.releaseTime;
-    launchedBatches.push({ ...batch, releaseTime: Math.max(batch.releaseTime, pullReleaseTime) });
-    launched += batch.packSize;
-  }
-  const completed = Math.min(launched, potentialCompleted);
-  return {
-    releaseInterval: demandedBatches[demandedBatches.length - 1]?.interval ?? Math.max(simulation.pitchTimeSec, pacemakerInterval * packSize),
-    packSize,
-    demandedPacks,
-    demandedBatches,
-    launchedBatches,
-    demanded,
-    launched,
-    completed,
-    wip: Math.max(0, launched - completed),
-    blocked: Math.max(0, demanded - launched),
-    completionInterval,
-    nominalLeadSec,
-  };
 }
 
 function planningData(assumptions: ScenarioAssumptions) {
@@ -3818,13 +3429,12 @@ function StressTestModal({ canvas, onFocus, onClose }: {
     supplierDelayMinutes: 0,
     transportDelayMinutes: 0,
   });
-  const result = runStressTest(canvas.elements, canvas.assumptions, settings);
+  const result = runStressTest(canvas.elements, canvas.assumptions, settings, canvas.arrows);
   const update = <Key extends keyof StressTestSettings>(key: Key, value: StressTestSettings[Key]) => {
     setSettings((previous) => ({ ...previous, [key]: value }));
   };
-  const processOptions = canvas.elements
-    .filter((element) => element.kind === 'process' || element.kind === 'shared-process')
-    .sort((left, right) => left.x - right.x);
+  const flowOrder = materialFlowOrder(canvas.elements, canvas.arrows);
+  const processOptions = flowOrder.processes;
   const format = (value: number, digits = 1) => value.toLocaleString('pt-BR', { maximumFractionDigits: digits });
   const statusLabel = result.status === 'rupture' ? 'Ruptura' : result.status === 'attention' ? 'Atenção' : result.status === 'stable' ? 'Estável' : 'Incompleto';
   const maxDaily = Math.max(1, ...result.dayResults.map((day) => Math.max(day.required, day.delivered)));
@@ -3840,7 +3450,10 @@ function StressTestModal({ canvas, onFocus, onClose }: {
       <button className="editor-backdrop" onClick={onClose} aria-label="Fechar teste de estresse" />
       <section className="editor-window stress-test-modal">
         <header>
-          <div><h2 id="stress-test-title">Teste de estresse produtivo</h2><p>Simule vários dias sem alterar os dados deste Estado Futuro.</p></div>
+          <div><h2 id="stress-test-title">Teste de estresse produtivo</h2><p>Simule vários dias sem alterar os dados deste Estado Futuro.</p>
+            <p className="stress-flow-order">{flowOrder.source === 'setas'
+              ? `Ordem do fluxo pelas setas: ${processOptions.map((process) => process.label || 'Processo').join(' → ')}`
+              : 'Ordem do fluxo pela posição no mapa. Ligue os processos com setas de material para definir a sequência.'}</p></div>
           <button className="icon-button" onClick={onClose}><X size={20}/></button>
         </header>
 

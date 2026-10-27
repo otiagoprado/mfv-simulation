@@ -1,7 +1,8 @@
 // Extensão explícita: os testes executam este arquivo direto no Node.
 import { batchSettings, type BatchSettings } from './batch.ts';
 import { percentValue } from './numbers.ts';
-import type { CanvasElement, ScenarioAssumptions } from './canvas-types';
+import type { CanvasArrow, CanvasElement, ScenarioAssumptions } from './canvas-types';
+import { materialFlowOrder } from './flow-order.ts';
 
 export interface StressTestSettings {
   days: number;
@@ -83,11 +84,14 @@ function elementWidth(element: CanvasElement) {
   return Math.max(30, Number(element.data.width) || (element.kind === 'shared-process' ? 170 : 150));
 }
 
-function prepareProcesses(elements: CanvasElement[]) {
-  const rawProcesses = elements
-    .filter((element) => element.kind === 'process' || element.kind === 'shared-process')
-    .sort((left, right) => left.x - right.x);
-  const stocks = elements.filter((element) => STOCK_KINDS.includes(element.kind as typeof STOCK_KINDS[number]));
+function isStock(element: CanvasElement) {
+  return STOCK_KINDS.includes(element.kind as typeof STOCK_KINDS[number]);
+}
+
+function prepareProcesses(elements: CanvasElement[], arrows: CanvasArrow[]) {
+  const flowOrder = materialFlowOrder(elements, arrows);
+  const rawProcesses = flowOrder.processes;
+  const stocks = elements.filter(isStock);
 
   return rawProcesses.map((element, index): PreparedProcess => {
     const cycleTime = Math.max(0, Number(element.data.tc) || 0);
@@ -100,7 +104,9 @@ function prepareProcesses(elements: CanvasElement[]) {
     const next = rawProcesses[index + 1];
     const processEnd = element.x + elementWidth(element);
     const nextStart = next?.x ?? Infinity;
-    const stockBetween = stocks.filter((stock) => {
+    // Estoques ligados por setas entre os dois processos; sem eles, vale o que está entre os dois na tela.
+    const linkedStocks = (flowOrder.between.get(element.id) ?? []).filter(isStock);
+    const stockBetween = linkedStocks.length ? linkedStocks : stocks.filter((stock) => {
       const center = stock.x + Math.max(30, Number(stock.data.width) || 70) / 2;
       return center > processEnd && center < nextStart;
     });
@@ -126,6 +132,7 @@ export function runStressTest(
   elements: CanvasElement[],
   assumptions: ScenarioAssumptions,
   settings: StressTestSettings,
+  arrows: CanvasArrow[] = [],
 ): StressTestResult {
   const days = clamp(Math.round(settings.days) || 1, 1, 30);
   const shiftsPerDay = clamp(Math.round(settings.shiftsPerDay) || 1, 1, 3);
@@ -141,7 +148,7 @@ export function runStressTest(
   const dailyDemand = baseDailyDemand * clamp(settings.demandPercent, 10, 300) / 100;
   const variation = clamp(settings.cycleVariationPercent, 0, 100) / 100;
   const downtime = clamp(settings.extraDowntimePercent, 0, 80) / 100;
-  const processes = prepareProcesses(elements);
+  const processes = prepareProcesses(elements, arrows);
 
   if (!processes.length || processes.some((process) => process.effectiveCycleSec <= 0) || dailyDemand <= 0) {
     return {
