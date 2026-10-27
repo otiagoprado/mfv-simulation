@@ -1320,12 +1320,12 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
   const STACK_VISIBLE = 12;
   // Peças de um mesmo lote viajam juntas: contam quantas dividem o mesmo ponto do trajeto para desenhá-las como uma pilha.
   const transitKey = (stage: LiveUnit['stage']) => stage.kind === 'transit' ? `${stage.station}:${Math.round(stage.progress * 1000)}` : '';
-  const transitGroups = new Map<string, number>();
+  const transitGroups: Record<string, number> = {};
   liveFlow.units.slice(0, 160).forEach((unit) => {
     const key = transitKey(unit.stage);
-    if (key) transitGroups.set(key, (transitGroups.get(key) ?? 0) + 1);
+    if (key) transitGroups[key] = (transitGroups[key] ?? 0) + 1;
   });
-  const transitSeen = new Map<string, number>();
+  const transitSeen: Record<string, number> = {};
   const tokens = liveFlow.units.slice(0, 160).flatMap((unit) => {
     const { stage } = unit;
     const box = stationBoxes[stage.station];
@@ -1334,10 +1334,10 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
     if (stage.kind === 'transit') {
       point = pointAlongRoute(legPoints(stage.station), Math.min(1, Math.max(0, stage.progress)));
       const key = transitKey(stage);
-      const groupSize = transitGroups.get(key) ?? 1;
+      const groupSize = transitGroups[key] ?? 1;
       if (groupSize > 1) {
-        const slot = transitSeen.get(key) ?? 0;
-        transitSeen.set(key, slot + 1);
+        const slot = transitSeen[key] ?? 0;
+        transitSeen[key] = slot + 1;
         if (slot >= STACK_VISIBLE) return [];
         const column = slot % 3;
         const row = Math.floor(slot / 3);
