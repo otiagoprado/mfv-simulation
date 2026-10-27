@@ -81,3 +81,9 @@ test('sem lote de expedição cada produto é entregue ao chegar', () => {
   assert.equal(flow.shipping.waiting, 0);
   assert.ok(flow.completed > 10);
 });
+
+test('a simulação ao vivo continua nos dias seguintes', () => {
+  const daySec = assumptions.availableMinutesPerDay * 60;
+  const flow = live([process('a', 0, 60)], daySec * 2 + 600);
+  assert.ok(flow.launched > daySec / 120, `liberadas: ${flow.launched}`);
+});

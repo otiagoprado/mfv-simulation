@@ -352,6 +352,8 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
 
 /** Tempo de deslocamento entre dois processos na simulação ao vivo. */
 export const LIVE_TRANSIT_SEC = 60;
+/** A simulação ao vivo segue por vários dias úteis seguidos, para os lotes atravessarem a linha inteira. */
+export const LIVE_MAX_DAYS = 10;
 
 export type LiveUnitStage =
   /** A caminho do processo `station` (ou do cliente, quando `station` é o número de processos). */
@@ -405,7 +407,7 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   const demandedBatches: { batchIndex: number; product: HeijunkaSlot; packSize: number; releaseTime: number; interval: number }[] = [];
   let scheduledTime = 0;
   let batchIndex = 0;
-  while (scheduledTime <= elapsedSec && scheduledTime < availableSeconds && batchIndex < 2000) {
+  while (scheduledTime <= elapsedSec && scheduledTime < availableSeconds * LIVE_MAX_DAYS && batchIndex < 5000) {
     const product = sequence[batchIndex % sequence.length];
     const interval = Math.max(product.pitchTimeSec, pacemakerInterval * product.packSize);
     if (!Number.isFinite(interval) || interval <= 0) break;

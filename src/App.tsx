@@ -25,7 +25,7 @@ import { cloneCanvas, syncCanvasForward } from './canvas-sync';
 import { runStressTest, type StressTestSettings } from './stress-test';
 import { batchLeadTime, batchSettings } from './batch';
 import {
-  DEFAULT_ASSUMPTIONS, KANBAN_CONTROL_KINDS,
+  DEFAULT_ASSUMPTIONS, KANBAN_CONTROL_KINDS, LIVE_MAX_DAYS,
   buildLeveledSequence, calculateCanvasSimulation, calculateKanbanSizing, calculateLiveFlow, calculateScenario,
   defaultElementDimensions, elementDimensions, nearestProcess, normalizedProductMix, positiveNumber,
 } from './flow-engine';
@@ -2415,7 +2415,7 @@ export default function App() {
     const tick = (timestamp: number) => {
       if (liveLastTickRef.current !== null) {
         const deltaSeconds = Math.min(0.1, (timestamp - liveLastTickRef.current) / 1000);
-        setLiveElapsedSec((previous) => Math.min(simulatedDaySeconds, previous + deltaSeconds * liveSpeed));
+        setLiveElapsedSec((previous) => Math.min(simulatedDaySeconds * LIVE_MAX_DAYS, previous + deltaSeconds * liveSpeed));
       }
       liveLastTickRef.current = timestamp;
       liveFrameRef.current = window.requestAnimationFrame(tick);
@@ -2429,7 +2429,7 @@ export default function App() {
   }, [liveRunning, liveSpeed, simulatedDaySeconds]);
 
   useEffect(() => {
-    if (liveElapsedSec >= simulatedDaySeconds && liveRunning) setLiveRunning(false);
+    if (liveElapsedSec >= simulatedDaySeconds * LIVE_MAX_DAYS && liveRunning) setLiveRunning(false);
   }, [liveElapsedSec, liveRunning, simulatedDaySeconds]);
 
   const openElementEditor = (element: CanvasElement) => {
@@ -2977,7 +2977,9 @@ export default function App() {
   const nextLeveledSlot = liveFlow.blocked > 0
     ? liveFlow.demandedBatches[liveFlow.launchedBatches.length]?.product
     : simulation.leveledSequence[liveFlow.demandedPacks % Math.max(1, simulation.leveledSequence.length)];
-  const liveClock = `${String(Math.floor(liveElapsedSec / 3600)).padStart(2, '0')}:${String(Math.floor((liveElapsedSec % 3600) / 60)).padStart(2, '0')}`;
+  const liveDay = Math.min(LIVE_MAX_DAYS, Math.floor(liveElapsedSec / simulatedDaySeconds) + 1);
+  const liveDaySec = liveElapsedSec - (liveDay - 1) * simulatedDaySeconds;
+  const liveClock = `Dia ${liveDay} · ${String(Math.floor(liveDaySec / 3600)).padStart(2, '0')}:${String(Math.floor((liveDaySec % 3600) / 60)).padStart(2, '0')}`;
   const toggleLiveSimulation = () => {
     if (!simulation.rawMaterialEntry) {
       setAppDialog({ type: 'alert', title: 'Entrada do fluxo ausente', message: 'Adicione um estoque de matéria-prima para definir a entrada do fluxo produtivo.' });
@@ -2991,7 +2993,7 @@ export default function App() {
       setAppDialog({ type: 'alert', title: 'Processos não configurados', message: 'Adicione ao menos um processo com tempo de ciclo para executar a simulação.' });
       return;
     }
-    if (liveElapsedSec >= simulatedDaySeconds) setLiveElapsedSec(0);
+    if (liveElapsedSec >= simulatedDaySeconds * LIVE_MAX_DAYS) setLiveElapsedSec(0);
     setSelectedId(null);
     setLiveRunning((running) => !running);
   };
@@ -3156,7 +3158,7 @@ export default function App() {
             <div className={liveWip > 0 ? 'attention' : ''}><span>WIP em fluxo</span><strong>{liveWip}</strong></div>
             <div className={simulation.overloadedProcesses.length ? 'critical' : 'healthy'}><span>Situação</span><strong>{simulation.overloadedProcesses.length ? `${simulation.overloadedProcesses.length} quebra(m)` : 'Fluxo atende'}</strong></div>
           </div>
-          <div className="live-day-progress"><i style={{ width: `${Math.min(100, (liveElapsedSec / simulatedDaySeconds) * 100)}%` }}/></div>
+          <div className="live-day-progress" title={`Dia ${liveDay} de ${LIVE_MAX_DAYS}`}><i style={{ width: `${Math.min(100, (liveDaySec / simulatedDaySeconds) * 100)}%` }}/></div>
         </div>}
 
         {activeKind === 'future' && <div className="scenario-toolbar no-print">
