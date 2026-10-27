@@ -178,6 +178,11 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
   const finalCustomer = canvas.elements
     .filter((element) => element.kind === 'customer')
     .sort((a, b) => b.x - a.x)[0];
+  // Os produtos prontos se acumulam na expedição e só saem quando completam o lote de expedição.
+  const shippingPoint = canvas.elements
+    .filter((element) => element.kind === 'shipping-point')
+    .sort((a, b) => b.x - a.x)[0];
+  const shippingLot = Math.max(1, Math.round(Number(shippingPoint?.data.lote) || 1));
   const routeKinds: ElementKind[] = [
     'warehouse','inventory','safety-stock','buffer','supermarket','fifo','process','shared-process','waiting-time',
     'finished-goods','shipping-point','truck','transport-air','transport-ship','forklift','milk-run',
@@ -338,6 +343,8 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
     inventoryElements,
     rawMaterialEntry,
     finalCustomer,
+    shippingPoint,
+    shippingLot,
     routeReady: Boolean(rawMaterialEntry && finalCustomer),
     productionRouteElements,
   };
@@ -354,7 +361,9 @@ export type LiveUnitStage =
   /** Em setup ou sendo produzida no processo. */
   | { kind: 'processing'; station: number; position: number }
   /** Pronta no buffer de saída, esperando o restante do lote de transferência para seguir. */
-  | { kind: 'holding'; station: number; position: number };
+  | { kind: 'holding'; station: number; position: number }
+  /** Produto acabado na expedição, esperando completar o lote de expedição. */
+  | { kind: 'shipping'; station: number; position: number };
 
 export interface LiveUnit {
   index: number;
@@ -415,7 +424,8 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     runSec: metric.batch.runCycleSec,
     unitSec: metric.effectiveCycleSec,
   }));
-  const finalLegSec = LIVE_TRANSIT_SEC * 2 + simulation.waitingTimeMin * 60;
+  const finalLegSec = LIVE_TRANSIT_SEC + simulation.waitingTimeMin * 60;
+  const shippingLot = simulation.shippingLot;
   const units = demandedBatches.flatMap((batch) => Array.from({ length: batch.packSize }, () => batch));
   const scheduled = units.map((batch) => batch.releaseTime);
   const wipLimit = simulation.pullSystemActive ? Math.max(1, simulation.pullWipLimit) : Infinity;
@@ -469,8 +479,14 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
       depart.push(stationDepart);
     });
     const lastDepart = stations.length ? depart[stations.length - 1] : release;
-    const exit = lastDepart.map((time) => time + finalLegSec);
-    return { arrival, start, finish, depart, exit };
+    const shippingArrival = lastDepart.map((time) => time + finalLegSec);
+    // Cada lote de expedição sai junto quando a última peça dele chega; lote incompleto fica esperando.
+    const exit = shippingArrival.map((_, unit) => {
+      const first = Math.floor(unit / shippingLot) * shippingLot;
+      const members = shippingArrival.slice(first, first + shippingLot);
+      return members.length === shippingLot ? Math.max(...members) : Infinity;
+    });
+    return { arrival, start, finish, depart, shippingArrival, exit };
   };
 
   // No sistema puxado, uma peça só é liberada quando outra sai e abre espaço no limite de WIP.
@@ -490,6 +506,7 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   const stationStates: LiveStationState[] = stations.map((station) => ({ id: station.id, waiting: 0, processing: 0, holding: 0 }));
   const liveUnits: LiveUnit[] = [];
   let completed = 0;
+  let shippingWaiting = 0;
   launchedUnits.forEach((unit) => {
     if (timeline.exit[unit] <= elapsedSec) {
       completed += 1;
@@ -506,7 +523,10 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     }
     if (!stage) {
       const leftAt = stations.length ? timeline.depart[stations.length - 1][unit] : release[unit];
-      stage = { kind: 'transit', station: stations.length, progress: (elapsedSec - leftAt) / Math.max(1, timeline.exit[unit] - leftAt) };
+      const arrival = timeline.shippingArrival[unit];
+      stage = elapsedSec < arrival
+        ? { kind: 'transit', station: stations.length, progress: (elapsedSec - leftAt) / Math.max(1, arrival - leftAt) }
+        : { kind: 'shipping', station: stations.length, position: shippingWaiting++ };
     }
     const batch = units[unit];
     liveUnits.push({ index: unit, packIndex: batch.batchIndex, product: batch.product, stage });
@@ -528,5 +548,6 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     completionInterval,
     units: liveUnits,
     stations: stationStates,
+    shipping: { waiting: shippingWaiting, lot: shippingLot },
   };
 }

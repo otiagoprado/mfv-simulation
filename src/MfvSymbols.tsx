@@ -7,7 +7,6 @@ import forkliftThreeQuarter from './assets/forklift-three-quarter.png';
 import milkRunTuggerThreeQuarter from './assets/milk-run-tugger-three-quarter.png';
 import supplierFactoryThreeQuarter from './assets/supplier-factory-three-quarter.png';
 import finalCustomerThreeQuarter from './assets/final-customer-three-quarter.png';
-import rawMaterialThreeQuarter from './assets/raw-material-three-quarter.png';
 import finishedGoodsThreeQuarter from './assets/finished-goods-three-quarter.png';
 import warehouseThreeQuarter from './assets/warehouse-three-quarter.png';
 import shippingDockThreeQuarter from './assets/shipping-dock-three-quarter.png';
@@ -169,6 +168,13 @@ export function ProcessSymbol({ el, selected, onEdit, taktTimeSec = 0, available
       <line x1={0} y1={38} x2={w} y2={38} stroke="#9aa0ae" strokeWidth={1} />
       <text x={w/2} y={16} textAnchor="middle" fontSize={8.5} fontWeight="700" fontFamily="Arial" fill="#1a2a1a">{label.split('\n')[0]}</text>
       {label.split('\n')[1] && <text x={w/2} y={28} textAnchor="middle" fontSize={8} fontFamily="Arial" fill="#1a2a1a">{label.split('\n')[1]}</text>}
+      {/* Bandejas fixas: entrada à esquerda e saída à direita; a simulação empilha as peças nelas. */}
+      <g className="process-trays">
+        <path d={`M2,${h + 38} V${h + 52} H${w / 2 - 6} V${h + 38}`} fill="none" stroke="#5f6670" strokeWidth={1.6} />
+        <path d={`M${w / 2 + 6},${h + 38} V${h + 52} H${w - 2} V${h + 38}`} fill="none" stroke="#5f6670" strokeWidth={1.6} />
+        <text x={(w / 2 - 4) / 2} y={h + 62} textAnchor="middle" fontSize={6.5} fontWeight="800" fontFamily="Arial" fill="#4b5159">ENTRADA</text>
+        <text x={(w / 2 + 6 + w - 2) / 2} y={h + 62} textAnchor="middle" fontSize={6.5} fontWeight="800" fontFamily="Arial" fill="#4b5159">SAÍDA</text>
+      </g>
       {rows.map((r, i) => (
         <g key={r.k}>
           {i > 0 && <line x1={0} y1={38 + i * 17} x2={w} y2={38 + i * 17} stroke="#dde0e9" strokeWidth={0.8} />}
@@ -239,6 +245,10 @@ export function ShippingPointSymbol({ el, selected, onEdit }: SymProps) {
       {selected && <SelectionRect w={w} h={h} />}
       <TintedAssetImage el={el} href={shippingDockThreeQuarter} x={4} y={2} width={w-8} height={88} />
       <text x={w/2} y={103} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="#34383e">{el.label || 'Expedição'}</text>
+      {Number(el.data.lote) > 1 && <g transform={`translate(${w / 2 - 40},-19)`}>
+        <rect width={80} height={16} rx={8} fill="#ece6fa" stroke="#5b3fa0" strokeWidth={0.8} />
+        <text x={40} y={11} textAnchor="middle" fontSize={7} fontWeight="700" fontFamily="Arial" fill="#3f2a78">LOTE DE {el.data.lote} UN</text>
+      </g>}
       <EditBtn onEdit={onEdit} x={w-2} y={2} />
     </g>
   );
@@ -786,10 +796,31 @@ export function ExtendedSymbol(props: SymProps) {
     return <g><ProcessSymbol {...props} /><rect x={4} y={4} width={142} height={152} fill="none" stroke="#65748a" strokeWidth={1} strokeDasharray="5 3" pointerEvents="none" /></g>;
   }
 
-  if (el.kind === 'raw-material' || el.kind === 'finished-goods' || el.kind === 'warehouse') {
+  if (el.kind === 'raw-material') {
+    // Estoque genérico: pilha de caixas na cor do elemento, sem sugerir um tipo de material.
+    const w = 130; const h = 110;
+    const fill = String(el.data.color || DEFAULT_TRUCK_COLOR);
+    const box = (x: number, y: number) => <g key={`${x}-${y}`}>
+      <rect x={x} y={y} width={36} height={26} rx={2} fill={fill} stroke="#5f6670" strokeWidth={1.2} />
+      <line x1={x + 18} y1={y} x2={x + 18} y2={y + 26} stroke="#8a9099" strokeWidth={1} />
+      <line x1={x} y1={y + 13} x2={x + 36} y2={y + 13} stroke="#8a9099" strokeWidth={0.8} strokeDasharray="3 2" />
+    </g>;
+    return <g>
+      {selected && <SelectionRect w={w} h={h} />}
+      {[8, 47, 86].map((x) => box(x, 58))}
+      {[27, 66].map((x) => box(x, 31))}
+      {box(47, 4)}
+      <line x1={4} y1={85} x2={w - 4} y2={85} stroke="#5f6670" strokeWidth={1.4} />
+      {label(w/2,h-11)}
+      {Number(el.data.qty ?? 0) > 0 && <text x={w/2} y={h-2} textAnchor="middle" fontSize={6.5} fontFamily="Arial" fill="#6b7178">{el.data.qty} un</text>}
+      {edit(w-2)}
+    </g>;
+  }
+
+  if (el.kind === 'finished-goods' || el.kind === 'warehouse') {
     const isWarehouse = el.kind === 'warehouse';
     const w = isWarehouse ? 180 : 130; const h = isWarehouse ? 120 : 110;
-    const image = el.kind === 'raw-material' ? rawMaterialThreeQuarter : el.kind === 'finished-goods' ? finishedGoodsThreeQuarter : warehouseThreeQuarter;
+    const image = el.kind === 'finished-goods' ? finishedGoodsThreeQuarter : warehouseThreeQuarter;
     return <g>
       {selected && <SelectionRect w={w} h={h} />}
       <TintedAssetImage el={el} href={image} x={4} y={2} width={w-8} height={h-25} />

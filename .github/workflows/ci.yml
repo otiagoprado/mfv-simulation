@@ -18,5 +18,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
-      - run: pnpm test
+      # Resultado dos testes em formato TAP; cada falha vira uma anotação visível no commit.
+      - run: |
+          set -o pipefail
+          node --test --test-isolation=none --test-reporter=tap tests/*.test.mjs 2>&1 | tee test-output.tap || status=$?
+          grep -E '^# (tests|pass|fail)' test-output.tap | sed 's/^/::notice::/'
+          grep -E '^\s*not ok' test-output.tap | sed 's/^\s*/::error::/'
+          exit ${status:-0}
       - run: pnpm run build

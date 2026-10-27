@@ -848,7 +848,7 @@ const FIELD_DEFS: Partial<Record<ElementKind, { key: string; label: string; type
   supplier:             [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor do fornecedor', type: 'color' },{ key: 'freq', label: 'Frequência entrega', suffix: 'dias' }],
   customer:             [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor do cliente', type: 'color' },{ key: 'freq', label: 'Frequência expedição', suffix: 'dias' }],
   truck:                [{ key: 'label', label: 'Rótulo', type: 'text' },{ key: 'color', label: 'Cor do caminhão', type: 'color' },{ key: 'freq', label: 'Frequência', suffix: 'dias' }],
-  'shipping-point':     [{ key: 'label', label: 'Rótulo', type: 'text' },{ key: 'color', label: 'Cor da expedição', type: 'color' }],
+  'shipping-point':     [{ key: 'label', label: 'Rótulo', type: 'text' },{ key: 'color', label: 'Cor da expedição', type: 'color' },{ key: 'lote', label: 'Lote de expedição', suffix: 'un' }],
   inventory:            [{ key: 'qty', label: 'Quantidade', suffix: 'un' }],
   'safety-stock':       [{ key: 'qty', label: 'Quantidade', suffix: 'un' }],
   'raw-material':       [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor da matéria-prima', type: 'color' },{ key: 'qty', label: 'Quantidade', suffix: 'un' }],
@@ -1299,11 +1299,17 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
   const routeIndexOf = (id?: string) => stageElements.findIndex((element) => element.id === id);
   const firstRouteIndex = routeIndexOf(simulation.processMetrics[0]?.element.id);
   const lastRouteIndex = routeIndexOf(simulation.processMetrics[simulation.processMetrics.length - 1]?.element.id);
+  const shippingRouteIndex = routeIndexOf(simulation.shippingPoint?.id);
+  const shippingSize = simulation.shippingPoint ? elementDimensions(simulation.shippingPoint) : null;
+  const shippingCenter = simulation.shippingPoint && shippingSize
+    ? { x: simulation.shippingPoint.x + shippingSize.width / 2, y: simulation.shippingPoint.y + shippingSize.height / 2 }
+    : route[route.length - 1];
   const legPoints = (station: number) => {
     if (station === 0) return firstRouteIndex > 0 ? route.slice(0, firstRouteIndex + 1) : [route[0], { x: stationBoxes[0].cx, y: stationBoxes[0].cy }];
     if (station >= stationBoxes.length) {
       const last = stationBoxes[stationBoxes.length - 1];
-      return lastRouteIndex >= 0 ? route.slice(lastRouteIndex) : [{ x: last.cx, y: last.cy }, route[route.length - 1]];
+      if (lastRouteIndex >= 0 && shippingRouteIndex > lastRouteIndex) return route.slice(lastRouteIndex, shippingRouteIndex + 1);
+      return [{ x: last.cx, y: last.cy }, shippingCenter];
     }
     const from = stationBoxes[station - 1];
     const to = stationBoxes[station];
@@ -1320,8 +1326,16 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
     else if (stage.position >= STACK_VISIBLE) return [];
     else if (stage.kind === 'processing') {
       const count = Math.min(STACK_VISIBLE, liveFlow.stations[stage.station].processing);
-      point = { x: box.cx + (stage.position - (count - 1) / 2) * 17, y: box.cy };
-      scale = 0.65;
+      point = { x: box.cx + (stage.position - (count - 1) / 2) * 22, y: box.cy };
+      scale = 0.8;
+    } else if (stage.kind === 'shipping') {
+      // Produtos prontos empilhados na expedição até fechar o lote.
+      const column = stage.position % 6;
+      const row = Math.floor(stage.position / 6);
+      const floor = simulation.shippingPoint && shippingSize ? simulation.shippingPoint.y + shippingSize.height + 22 : route[route.length - 1].y + 80;
+      const left = simulation.shippingPoint ? simulation.shippingPoint.x + 4 : route[route.length - 1].x - 70;
+      point = { x: left + 10 + column * 15, y: floor - 7 - row * 13 };
+      scale = 0.55;
     } else {
       const column = stage.position % STACK_COLUMNS;
       const row = Math.floor(stage.position / STACK_COLUMNS);
@@ -1332,7 +1346,7 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
       scale = 0.55;
     }
     const truck = stage.kind === 'transit' ? truckCenters.find((center) => Math.hypot(point.x - center.x, point.y - center.y) < 58) : undefined;
-    return [{ index: unit.index, packIndex: unit.packIndex, product: unit.product, point, scale, moving: stage.kind === 'transit', truckId: truck?.id }];
+    return [{ index: unit.index, packIndex: unit.packIndex, product: unit.product, point, scale, moving: stage.kind === 'transit', processing: stage.kind === 'processing', truckId: truck?.id }];
   });
   const loadingTruckIds = new Set(tokens.map((token) => token.truckId).filter(Boolean));
   const bottleneckMetric = simulation.processMetrics.find((metric) => metric.element.id === simulation.bottleneck?.id);
@@ -1364,15 +1378,29 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
       </g>)}
       {stationBoxes.map((box, station) => {
         const state = liveFlow.stations[station];
-        const trayTop = box.trayFloor - 14;
-        const tray = (left: number, right: number) => `M${left},${trayTop} V${box.trayFloor} H${right} V${trayTop}`;
-        return <g key={`trays-${state?.id ?? station}`} className="live-trays">
-          <path d={tray(box.left + 2, box.cx - 6)} fill="none" stroke="#5f6670" strokeWidth={1.6} />
-          <path d={tray(box.cx + 6, box.right - 2)} fill="none" stroke="#5f6670" strokeWidth={1.6} />
-          <text x={(box.left + box.cx) / 2} y={box.trayFloor + 10} textAnchor="middle" fontSize={6.5} fontWeight="800" fontFamily="Arial" fill="#4b5159">ENTRADA · {state?.waiting ?? 0}</text>
-          <text x={(box.cx + box.right) / 2} y={box.trayFloor + 10} textAnchor="middle" fontSize={6.5} fontWeight="800" fontFamily="Arial" fill="#4b5159">SAÍDA · {state?.holding ?? 0}</text>
+        const pill = (x: number, value: number) => <g transform={`translate(${x},${box.trayFloor - 22})`}>
+          <rect x={-11} y={-8} width={22} height={16} rx={8} fill={value > 0 ? '#b42318' : '#9aa0ae'} />
+          <text x={0} y={4} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="white">{value}</text>
+        </g>;
+        return <g key={`tray-counts-${state?.id ?? station}`}>
+          {pill(box.cx - 16, state?.waiting ?? 0)}
+          {pill(box.cx + 16, state?.holding ?? 0)}
         </g>;
       })}
+      {(() => {
+        const shippingPoint = simulation.shippingPoint;
+        const shipping = liveFlow.shipping;
+        const size = shippingPoint ? elementDimensions(shippingPoint) : null;
+        const left = shippingPoint && size ? shippingPoint.x + 4 : route[route.length - 1].x - 70;
+        const right = shippingPoint && size ? shippingPoint.x + size.width - 4 : route[route.length - 1].x + 70;
+        const floor = shippingPoint && size ? shippingPoint.y + size.height + 22 : route[route.length - 1].y + 80;
+        return <g className="live-shipping-tray">
+          <path d={`M${left},${floor - 14} V${floor} H${right} V${floor - 14}`} fill="none" stroke="#5f6670" strokeWidth={1.6} />
+          <text x={(left + right) / 2} y={floor + 10} textAnchor="middle" fontSize={6.5} fontWeight="800" fontFamily="Arial" fill="#4b5159">
+            PRONTOS · {shipping.waiting}{shipping.lot > 1 ? ` DE ${shipping.lot}` : ''}
+          </text>
+        </g>;
+      })()}
       {simulation.processMetrics.map((metric, station) => {
         const size = elementDimensions(metric.element);
         const queue = liveFlow.stations[station]?.waiting ?? 0;
@@ -1408,6 +1436,7 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
         </g>;
       })()}
       {tokens.map((token) => <g key={token.index} transform={`translate(${token.point.x},${token.point.y}) scale(${token.scale})`} className={`live-product-token ${token.truckId ? 'inside-truck' : ''}`}>
+        {token.processing && <circle r={19} fill="#fff6c2" stroke="#d79a18" strokeWidth={1.5} />}
         <path d="M-13,-7 L0,-13 L13,-7 L0,-1 Z" fill={token.product?.color ?? canvas.themeColor} stroke="#23415a" strokeWidth={1.2}/>
         <path d="M-13,-7 V8 L0,14 V-1 Z" fill="white" stroke="#23415a" strokeWidth={1.2}/>
         <path d="M13,-7 V8 L0,14 V-1 Z" fill={token.product?.color ?? '#dcecff'} fillOpacity={0.22} stroke="#23415a" strokeWidth={1.2}/>

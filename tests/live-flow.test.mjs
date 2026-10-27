@@ -65,3 +65,19 @@ test('como no vídeo: com lotes de 5 a primeira peça demora muito mais a sair q
   assert.ok(run({}).completed >= 1);
   assert.equal(run({ fabricacao: 'lote', lote: 5 }).completed, 0);
 });
+
+test('produtos prontos ficam na expedição até completar o lote de expedição', () => {
+  const shipping = { id: 'ship', kind: 'shipping-point', x: 900, y: 0, label: 'Expedição', data: { lote: 10 } };
+  const flow = live([process('a', 0, 60), shipping], 40 * 60);
+  assert.equal(flow.shipping.lot, 10);
+  assert.ok(flow.shipping.waiting > 0 && flow.shipping.waiting < 10, `na expedição: ${flow.shipping.waiting}`);
+  assert.equal(flow.completed, 10);
+});
+
+test('sem lote de expedição cada produto é entregue ao chegar', () => {
+  const shipping = { id: 'ship', kind: 'shipping-point', x: 900, y: 0, label: 'Expedição', data: {} };
+  const flow = live([process('a', 0, 60), shipping], 40 * 60);
+  assert.equal(flow.shipping.lot, 1);
+  assert.equal(flow.shipping.waiting, 0);
+  assert.ok(flow.completed > 10);
+});
