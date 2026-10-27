@@ -349,11 +349,11 @@ export const LIVE_TRANSIT_SEC = 60;
 export type LiveUnitStage =
   /** A caminho do processo `station` (ou do cliente, quando `station` é o número de processos). */
   | { kind: 'transit'; station: number; progress: number }
-  /** Na fila do processo, esperando a vez ou o lote completar. */
+  /** No buffer de entrada do processo, esperando a vez ou o lote completar. */
   | { kind: 'queue'; station: number; position: number }
   /** Em setup ou sendo produzida no processo. */
   | { kind: 'processing'; station: number; position: number }
-  /** Pronta, esperando o restante do lote de transferência para seguir. */
+  /** Pronta no buffer de saída, esperando o restante do lote de transferência para seguir. */
   | { kind: 'holding'; station: number; position: number };
 
 export interface LiveUnit {
@@ -446,11 +446,12 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
           const members = Array.from({ length: station.batchSize }, (_, offset) => first + offset);
           const lastArrival = Math.max(...members.map((unit) => stationArrival[unit]));
           if (!Number.isFinite(lastArrival)) break;
-          // O lote só começa com todas as peças na entrada; o setup ocupa o processo antes da produção.
+          // O lote só começa com todas as peças no buffer de entrada; o setup ocupa o processo antes da primeira.
+          // Depois o operador produz uma peça por vez e as deixa no buffer de saída.
           const batchStart = Math.max(lastArrival, freeAt);
           const runStart = batchStart + station.setupSec;
           members.forEach((unit, offset) => {
-            stationStart[unit] = batchStart;
+            stationStart[unit] = offset === 0 ? batchStart : runStart + offset * station.runSec;
             stationFinish[unit] = runStart + (offset + 1) * station.runSec;
           });
           // Cada lote de transferência segue junto quando a última peça dele fica pronta.

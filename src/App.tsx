@@ -52,7 +52,7 @@ const TINTABLE_ASSET_KINDS: ElementKind[] = [
   'transport-air','transport-ship','forklift','milk-run',
 ];
 type ActiveKind = 'current' | 'future';
-type ScenarioPreset = 'current' | 'demand-up' | 'demand-down' | 'setup-half' | 'availability-up' | 'bottleneck-resource' | 'quality-up' | 'one-piece-flow';
+type ScenarioPreset = 'current' | 'demand-up' | 'demand-down' | 'setup-half' | 'availability-up' | 'bottleneck-resource' | 'quality-up' | 'one-piece-flow' | 'batch-production';
 
 interface FutureVariant {
   id: string;
@@ -819,6 +819,9 @@ function canvasForPreset(current: CanvasState, preset: ScenarioPreset) {
   if (preset === 'one-piece-flow') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
     ? { ...element, data: { ...element.data, fabricacao: 'unitario' } }
     : element);
+  if (preset === 'batch-production') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
+    ? { ...element, data: { ...element.data, fabricacao: 'lote', lote: Math.max(1, Number(element.data.lote) || 1) > 1 ? Number(element.data.lote) : 5 } }
+    : element);
   if (preset === 'quality-up') next.elements = next.elements.map((element) => ['process','shared-process'].includes(element.kind)
     ? { ...element, data: { ...element.data, qualidade: Math.min(100, percentValue(element.data.qualidade) + 5) } }
     : element);
@@ -1288,7 +1291,9 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
   const liveFlow = calculateLiveFlow(simulation, canvas.assumptions, elapsedSec);
   const stationBoxes = simulation.processMetrics.map((metric) => {
     const size = elementDimensions(metric.element);
-    return { left: metric.element.x, top: metric.element.y, right: metric.element.x + size.width, cx: metric.element.x + size.width / 2, cy: metric.element.y + size.height / 2 };
+    const bottom = metric.element.y + size.height;
+    // Bandejas de entrada e saída logo abaixo da máquina; `trayFloor` é o fundo delas.
+    return { left: metric.element.x, top: metric.element.y, right: metric.element.x + size.width, bottom, cx: metric.element.x + size.width / 2, cy: metric.element.y + size.height / 2, trayFloor: bottom + 52 };
   });
   // Trechos percorridos entre a entrada, cada processo e o cliente; o primeiro e o último seguem o traçado do mapa.
   const routeIndexOf = (id?: string) => stageElements.findIndex((element) => element.id === id);
@@ -1304,7 +1309,7 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
     const to = stationBoxes[station];
     return [{ x: from.cx, y: from.cy }, { x: to.cx, y: to.cy }];
   };
-  const STACK_COLUMNS = 3;
+  const STACK_COLUMNS = 4;
   const STACK_VISIBLE = 12;
   const tokens = liveFlow.units.slice(0, 160).flatMap((unit) => {
     const { stage } = unit;
@@ -1320,9 +1325,10 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
     } else {
       const column = stage.position % STACK_COLUMNS;
       const row = Math.floor(stage.position / STACK_COLUMNS);
+      const y = box.trayFloor - 7 - row * 13;
       point = stage.kind === 'queue'
-        ? { x: box.left - 14 - column * 15, y: box.top + 26 + row * 15 }
-        : { x: box.right + 14 + column * 15, y: box.top + 26 + row * 15 };
+        ? { x: box.left + 12 + column * 15, y }
+        : { x: box.right - 12 - column * 15, y };
       scale = 0.55;
     }
     const truck = stage.kind === 'transit' ? truckCenters.find((center) => Math.hypot(point.x - center.x, point.y - center.y) < 58) : undefined;
@@ -1344,7 +1350,7 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
       })}
       {simulation.processMetrics.filter((metric) => metric.batch.mode === 'lote').map((metric) => {
         const size = elementDimensions(metric.element);
-        return <g key={`batch-${metric.element.id}`} transform={`translate(${metric.element.x + size.width / 2},${metric.element.y + size.height + 16})`}>
+        return <g key={`batch-${metric.element.id}`} transform={`translate(${metric.element.x + size.width / 2},${metric.element.y + size.height + 76})`}>
           <rect x={-60} y={-10} width={120} height={20} rx={10} fill="#5b3fa0" />
           <text x={0} y={4} textAnchor="middle" fontSize={7.5} fontWeight="850" fontFamily="Arial" fill="white">LOTE {metric.batch.batchSize} · TRANSF. {metric.batch.transferBatch}</text>
         </g>;
@@ -1356,6 +1362,17 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
           <text x={45} y={15} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="white">CARREGANDO</text>
         </g>
       </g>)}
+      {stationBoxes.map((box, station) => {
+        const state = liveFlow.stations[station];
+        const trayTop = box.trayFloor - 14;
+        const tray = (left: number, right: number) => `M${left},${trayTop} V${box.trayFloor} H${right} V${trayTop}`;
+        return <g key={`trays-${state?.id ?? station}`} className="live-trays">
+          <path d={tray(box.left + 2, box.cx - 6)} fill="none" stroke="#5f6670" strokeWidth={1.6} />
+          <path d={tray(box.cx + 6, box.right - 2)} fill="none" stroke="#5f6670" strokeWidth={1.6} />
+          <text x={(box.left + box.cx) / 2} y={box.trayFloor + 10} textAnchor="middle" fontSize={6.5} fontWeight="800" fontFamily="Arial" fill="#4b5159">ENTRADA · {state?.waiting ?? 0}</text>
+          <text x={(box.cx + box.right) / 2} y={box.trayFloor + 10} textAnchor="middle" fontSize={6.5} fontWeight="800" fontFamily="Arial" fill="#4b5159">SAÍDA · {state?.holding ?? 0}</text>
+        </g>;
+      })}
       {simulation.processMetrics.map((metric, station) => {
         const size = elementDimensions(metric.element);
         const queue = liveFlow.stations[station]?.waiting ?? 0;
@@ -1986,6 +2003,7 @@ const SCENARIO_PRESETS: { id: ScenarioPreset; title: string; description: string
   { id: 'availability-up', title: 'Disponibilidade +10 p.p.', description: 'Testa estabilidade e manutenção.' },
   { id: 'quality-up', title: 'Qualidade +5 p.p.', description: 'Reduz perdas acumuladas ao longo do fluxo.' },
   { id: 'one-piece-flow', title: 'Fluxo unitário', description: 'Troca a fabricação por lotes por peça a peça em todos os processos.' },
+  { id: 'batch-production', title: 'Produção em lotes', description: 'Todos os processos fabricam por lote; lotes de 1 peça passam a 5.' },
 ];
 
 function ScenarioCreateModal({ onCreate, onClose }: { onCreate: (name: string, preset: ScenarioPreset) => void; onClose: () => void }) {

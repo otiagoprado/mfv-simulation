@@ -47,3 +47,21 @@ test('o gargalo forma fila, mas o fluxo continua no ritmo dele', () => {
   assert.ok(flow.stations[1].waiting > 50);
   assert.equal(flow.stations[0].waiting, 0);
 });
+
+test('dentro do lote o operador faz uma peça por vez e as acumula no buffer de saída', () => {
+  const flow = live([process('a', 0, 60, { fabricacao: 'lote', lote: 5 }), process('b', 300, 60)], 700);
+  assert.equal(flow.stations[0].processing, 1);
+  assert.equal(flow.stations[0].holding, 2);
+});
+
+test('como no vídeo: com lotes de 5 a primeira peça demora muito mais a sair que no fluxo unitário', () => {
+  // Demanda alta (uma peça a cada 12 s) e 4 estações de 1 min/peça.
+  const fast = { ...assumptions, monthlyDemand: 48000, productMix: [{ id: 'product-a', name: 'Produto A', monthlyDemand: 48000, packSize: 1 }] };
+  const run = (data) => {
+    const elements = [0, 1, 2, 3].map((index) => process(`s${index}`, index * 300, 60, data));
+    const canvas = { elements, arrows: [], assumptions: fast, themeColor: '#0071e3' };
+    return calculateLiveFlow(calculateCanvasSimulation(canvas), fast, 15 * 60);
+  };
+  assert.ok(run({}).completed >= 1);
+  assert.equal(run({ fabricacao: 'lote', lote: 5 }).completed, 0);
+});
