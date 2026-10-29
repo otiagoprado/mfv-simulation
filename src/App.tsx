@@ -17,7 +17,7 @@ import {
   KanbanBoardSymbol, KanbanProductionSymbol, KanbanWithdrawalSymbol,
   LegendSymbol, NoteSymbol, OperatorSymbol, PartySymbol, PlanningSymbol,
   ProcessSymbol, ProductionScheduleSymbol, SequencingBoxSymbol,
-  ShippingPointSymbol, SupermarketSymbol, TimelineSymbol, TruckSymbol,
+  ShippingPointSymbol, SupermarketSymbol, TimelineSymbol, TruckSymbol, MACHINE_TYPES,
   WorkCellSymbol,
 } from './MfvSymbols';
 import { exportJPEG, exportPDF, exportSVG, type PaperSize } from './export';
@@ -843,10 +843,10 @@ function canvasForPreset(current: CanvasState, preset: ScenarioPreset) {
 
 // ─── Field definitions para cada elemento ────────────────────────────────────
 
-const FIELD_DEFS: Partial<Record<ElementKind, { key: string; label: string; type?: string; suffix?: string }[]>> = {
+const FIELD_DEFS: Partial<Record<ElementKind, { key: string; label: string; type?: string; suffix?: string; options?: { value: string; label: string }[] }[]>> = {
   process:              [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'pecasCiclo', label: 'Peças por ciclo', suffix: 'un' },{ key: 'setup', label: 'Setup / troca', suffix: 'min' },{ key: 'lote', label: 'Lote de produção', suffix: 'un' },{ key: 'op', label: 'Operadores', suffix: 'pess.' },{ key: 'recurso', label: 'Recursos paralelos', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade / OEE', suffix: '%' },{ key: 'qualidade', label: 'Qualidade na saída', suffix: '%' }],
   'shared-process':     [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'pecasCiclo', label: 'Peças por ciclo', suffix: 'un' },{ key: 'setup', label: 'Setup / troca', suffix: 'min' },{ key: 'lote', label: 'Lote de produção', suffix: 'un' },{ key: 'op', label: 'Operadores', suffix: 'pess.' },{ key: 'recurso', label: 'Recursos paralelos', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade / OEE', suffix: '%' },{ key: 'qualidade', label: 'Qualidade na saída', suffix: '%' }],
-  machine:              [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor da máquina', type: 'color' },{ key: 'recurso', label: 'Quantidade', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade', suffix: '%' }],
+  machine:              [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tipo', label: 'Tipo de máquina', type: 'select', options: MACHINE_TYPES },{ key: 'color', label: 'Cor da máquina', type: 'color' },{ key: 'recurso', label: 'Quantidade', suffix: 'un' },{ key: 'disp', label: 'Disponibilidade', suffix: '%' }],
   inspection:           [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'tc', label: 'Tempo de ciclo', suffix: 's' },{ key: 'op', label: 'Operadores', suffix: 'pess.' }],
   'work-cell':          [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'op', label: 'Operadores', suffix: 'pess.' }],
   supplier:             [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor do fornecedor', type: 'color' },{ key: 'freq', label: 'Frequência entrega', suffix: 'dias' }],
@@ -1391,7 +1391,7 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
       {simulation.processMetrics.filter((metric) => metric.batch.mode === 'lote').map((metric) => {
         const size = elementDimensions(metric.element);
         return <g key={`batch-${metric.element.id}`} transform={`translate(${metric.element.x + size.width / 2},${metric.element.y + size.height + 76})`}>
-          <rect x={-60} y={-10} width={120} height={20} rx={10} fill="#5b3fa0" />
+          <rect x={-60} y={-10} width={120} height={20} rx={10} fill={canvas.themeColor} />
           <text x={0} y={4} textAnchor="middle" fontSize={7.5} fontWeight="850" fontFamily="Arial" fill="white">LOTE DE {metric.batch.batchSize} PEÇAS</text>
         </g>;
       })}
@@ -1402,17 +1402,6 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
           <text x={45} y={15} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="white">CARREGANDO</text>
         </g>
       </g>)}
-      {stationBoxes.map((box, station) => {
-        const state = liveFlow.stations[station];
-        const pill = (x: number, value: number) => <g transform={`translate(${x},${box.trayFloor - 22})`}>
-          <rect x={-11} y={-8} width={22} height={16} rx={8} fill={value > 0 ? '#b42318' : '#9aa0ae'} />
-          <text x={0} y={4} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="white">{value}</text>
-        </g>;
-        return <g key={`tray-counts-${state?.id ?? station}`}>
-          {pill(box.cx - 16, state?.waiting ?? 0)}
-          {pill(box.cx + 16, state?.holding ?? 0)}
-        </g>;
-      })}
       {(() => {
         const shippingPoint = simulation.shippingPoint;
         const shipping = liveFlow.shipping;
@@ -1469,6 +1458,18 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
         <path d="M0,-13 V-1" stroke="#23415a" strokeWidth={1}/>
         {token.moving && <text x={0} y={-18} textAnchor="middle" fontSize={7} fontWeight="800" fontFamily="Arial" fill="#34383e">{token.product?.code ?? 'P1'} · CX {token.packIndex + 1}</text>}
       </g>)}
+      {/* Contadores das bandejas por cima das peças, acima da pilha, para não ficarem escondidos. */}
+      {stationBoxes.map((box, station) => {
+        const state = liveFlow.stations[station];
+        const pill = (x: number, value: number) => <g transform={`translate(${x},${box.trayFloor - 50})`}>
+          <rect x={-12} y={-8} width={24} height={16} rx={8} fill={value > 0 ? '#ff3b30' : '#8e8e93'} stroke="white" strokeWidth={1.5} />
+          <text x={0} y={4} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="white">{value}</text>
+        </g>;
+        return <g key={`tray-counts-${state?.id ?? station}`}>
+          {pill(box.left + 34, state?.waiting ?? 0)}
+          {pill(box.right - 34, state?.holding ?? 0)}
+        </g>;
+      })}
     </g>
   );
 }
@@ -1595,6 +1596,9 @@ function ElementPopover({ el, processes, assumptions, onUpdate, onDelete, onClos
               <textarea value={el.label} rows={6} onChange={(e) => onUpdate({ label: e.target.value })} />
             ) : f.type === 'text' ? (
               <input value={el.label} onChange={(e) => onUpdate({ label: e.target.value })} />
+            ) : f.type === 'select' ? (
+              <SiteSelect className="popover-select" value={String(el.data[f.key] ?? f.options?.[0]?.value ?? '')} ariaLabel={f.label}
+                options={f.options ?? []} onChange={(value) => onUpdate({ data: { ...el.data, [f.key]: value } })} />
             ) : f.type === 'color' ? (
               <div className="popover-color-wrap">
                 <input className="popover-color-input" type="color" value={String(el.data[f.key] ?? DEFAULT_TRUCK_COLOR)}

@@ -126,6 +126,104 @@ function TintedAssetImage({ el, href, x, y, width, height }: {
   </>;
 }
 
+// ── Máquinas genéricas ───────────────────────────────────────────────────────
+export const MACHINE_TYPES: { value: string; label: string }[] = [
+  { value: 'cnc', label: 'Máquina CNC (imagem)' },
+  { value: 'generica', label: 'Máquina genérica' },
+  { value: 'forno', label: 'Forno / estufa' },
+  { value: 'misturador', label: 'Misturador / masseira' },
+  { value: 'esteira', label: 'Esteira transportadora' },
+  { value: 'prensa', label: 'Prensa / injetora' },
+  { value: 'embaladora', label: 'Embaladora / seladora' },
+  { value: 'tanque', label: 'Tanque / reator' },
+  { value: 'bancada', label: 'Bancada manual' },
+];
+
+/** Desenho vetorial simples de uma máquina genérica, na cor escolhida para o equipamento. Área 142×94 a partir de (4,2). */
+function MachineGlyph({ tipo, color }: { tipo: string; color: string }) {
+  const body = /^#[0-9a-f]{6}$/i.test(color) ? color : DEFAULT_TRUCK_COLOR;
+  const dark = mixColor(body, '#000000', 0.45);
+  const ink = '#3a3f47';
+  const line = { stroke: ink, strokeWidth: 1.6, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const };
+  const base = <path d="M14,92 H136" {...line} />;
+  switch (tipo) {
+    case 'forno':
+      return <g>
+        <rect x={30} y={24} width={90} height={64} rx={6} fill={body} {...line} />
+        <rect x={44} y={40} width={62} height={34} rx={4} fill="#fff" {...line} />
+        <path d="M58,66 C60,58 54,56 58,48 M74,66 C76,58 70,56 74,48 M90,66 C92,58 86,56 90,48" fill="none" stroke="#ff9f0a" strokeWidth={2} strokeLinecap="round" />
+        <rect x={100} y={8} width={12} height={18} fill={dark} {...line} />
+        <circle cx={112} cy={32} r={2.2} fill="#ff3b30" />
+        <path d="M40,88 V92 M110,88 V92" {...line} />
+        {base}
+      </g>;
+    case 'misturador':
+      return <g>
+        <path d="M40,40 H110 L100,80 H50 Z" fill={body} {...line} />
+        <rect x={62} y={14} width={26} height={16} rx={3} fill={dark} {...line} />
+        <path d="M75,30 V72 M60,58 L90,58 M63,70 L87,46" {...line} />
+        <path d="M46,80 V92 M104,80 V92" {...line} />
+        <circle cx={118} cy={22} r={3} fill="#0a84ff" />
+        {base}
+      </g>;
+    case 'esteira':
+      return <g>
+        <rect x={16} y={46} width={118} height={16} rx={8} fill={body} {...line} />
+        {[28, 50, 72, 94, 116].map((cx) => <circle key={cx} cx={cx} cy={54} r={4.5} fill="#fff" {...line} />)}
+        <rect x={60} y={30} width={22} height={16} rx={2} fill="#fff" {...line} />
+        <path d="M30,62 V92 M120,62 V92 M24,92 H36 M114,92 H126" {...line} />
+        <path d="M100,24 H128 M122,18 L128,24 L122,30" fill="none" {...line} />
+      </g>;
+    case 'prensa':
+      return <g>
+        <path d="M34,90 V18 H116 V90" fill="none" {...line} />
+        <rect x={26} y={10} width={98} height={10} rx={3} fill={dark} {...line} />
+        <rect x={56} y={20} width={38} height={26} fill={body} {...line} />
+        <path d="M66,46 H84 V56 H66 Z" fill={dark} {...line} />
+        <rect x={46} y={64} width={58} height={10} fill={body} {...line} />
+        <path d="M62,56 L62,64 M88,56 L88,64" {...line} strokeDasharray="2 2" />
+        {base}
+      </g>;
+    case 'embaladora':
+      return <g>
+        <rect x={34} y={36} width={82} height={44} rx={5} fill={body} {...line} />
+        <circle cx={60} cy={22} r={11} fill="#fff" {...line} />
+        <circle cx={60} cy={22} r={3.5} fill={dark} />
+        <path d="M71,22 H110 V36" fill="none" {...line} />
+        <rect x={116} y={58} width={18} height={14} rx={2} fill="#fff" {...line} />
+        <path d="M42,52 H74 M42,62 H66" {...line} stroke="#fff" />
+        <path d="M44,80 V92 M106,80 V92" {...line} />
+        {base}
+      </g>;
+    case 'tanque':
+      return <g>
+        <rect x={46} y={22} width={58} height={56} rx={14} fill={body} {...line} />
+        <ellipse cx={75} cy={24} rx={29} ry={7} fill={dark} {...line} />
+        <path d="M104,46 H126 V92 M52,78 V92 M98,78 V92" fill="none" {...line} />
+        <circle cx={126} cy={60} r={4} fill="#fff" {...line} />
+        <path d="M58,50 H92" stroke="#fff" strokeWidth={2} strokeDasharray="4 3" />
+        {base}
+      </g>;
+    case 'bancada':
+      return <g>
+        <rect x={22} y={44} width={106} height={10} rx={2} fill={body} {...line} />
+        <path d="M30,54 V92 M120,54 V92 M30,74 H120" {...line} />
+        <rect x={52} y={30} width={22} height={14} rx={2} fill="#fff" {...line} />
+        <circle cx={96} cy={36} r={7} fill="#fff" {...line} />
+        <path d="M96,29 V22 M89,36 H82" {...line} />
+      </g>;
+    default:
+      return <g>
+        <rect x={30} y={26} width={90} height={60} rx={6} fill={body} {...line} />
+        <rect x={40} y={36} width={34} height={24} rx={3} fill="#fff" {...line} />
+        <circle cx={96} cy={44} r={3} fill="#0a84ff" /><circle cx={108} cy={44} r={3} fill="#ff9f0a" />
+        <rect x={88} y={56} width={24} height={14} rx={2} fill={dark} {...line} />
+        <path d="M46,86 V92 M104,86 V92 M60,14 H90 M75,14 V26" {...line} />
+        {base}
+      </g>;
+  }
+}
+
 // ── Processo ─────────────────────────────────────────────────────────────────
 export function ProcessSymbol({ el, selected, onEdit, taktTimeSec = 0, availableMinutesPerDay = 0, accentColor, processLoadPercent, processCapacityPerDay }: SymProps) {
   const w = 150; const h = 160;
@@ -162,8 +260,8 @@ export function ProcessSymbol({ el, selected, onEdit, taktTimeSec = 0, available
         </text>
       </g>}
       {batchSizeOf(el.data) > 1 && <g transform={`translate(${w - 58},-19)`}>
-        <rect width={54} height={16} rx={8} fill="#ece6fa" stroke="#5b3fa0" strokeWidth={0.8} />
-        <text x={27} y={11} textAnchor="middle" fontSize={7} fontWeight="700" fontFamily="Arial" fill="#3f2a78">POR LOTE</text>
+        <rect width={54} height={16} rx={8} fill={colors.light} stroke={colors.dark} strokeWidth={0.8} />
+        <text x={27} y={11} textAnchor="middle" fontSize={7} fontWeight="700" fontFamily="Arial" fill={colors.darker}>POR LOTE</text>
       </g>}
       <rect width={w} height={h} rx={4} fill="white" stroke={selected ? '#0071e3' : overloaded ? '#ff3b30' : colors.dark} strokeWidth={selected || overloaded ? 2.5 : 1.5} />
       <rect width={w} height={38} rx={4} fill={selected ? colors.light : overloaded ? '#ffd5d1' : colors.mid} />
@@ -240,16 +338,17 @@ export function TruckSymbol({ el, selected, onEdit }: SymProps) {
 }
 
 // ── Ponto de expedição ────────────────────────────────────────────────────────
-export function ShippingPointSymbol({ el, selected, onEdit }: SymProps) {
+export function ShippingPointSymbol({ el, selected, onEdit, accentColor }: SymProps) {
   const w = 150; const h = 110;
+  const colors = theme(accentColor);
   return (
     <g>
       {selected && <SelectionRect w={w} h={h} />}
       <TintedAssetImage el={el} href={shippingDockThreeQuarter} x={4} y={2} width={w-8} height={88} />
       <text x={w/2} y={103} textAnchor="middle" fontSize={8} fontWeight="800" fontFamily="Arial" fill="#34383e">{el.label || 'Expedição'}</text>
       {Number(el.data.lote) > 1 && <g transform={`translate(${w / 2 - 40},-19)`}>
-        <rect width={80} height={16} rx={8} fill="#ece6fa" stroke="#5b3fa0" strokeWidth={0.8} />
-        <text x={40} y={11} textAnchor="middle" fontSize={7} fontWeight="700" fontFamily="Arial" fill="#3f2a78">LOTE DE {el.data.lote} UN</text>
+        <rect width={80} height={16} rx={8} fill={colors.light} stroke={colors.dark} strokeWidth={0.8} />
+        <text x={40} y={11} textAnchor="middle" fontSize={7} fontWeight="700" fontFamily="Arial" fill={colors.darker}>LOTE DE {el.data.lote} UN</text>
       </g>}
       <EditBtn onEdit={onEdit} x={w-2} y={2} />
     </g>
@@ -834,7 +933,11 @@ export function ExtendedSymbol(props: SymProps) {
 
   if (el.kind === 'machine') {
     const w=150,h=120;
-    return <g>{selected && <SelectionRect w={w} h={h}/>}<TintedAssetImage el={el} href={cncMachineThreeQuarter} x={4} y={2} width={w-8} height={94}/>
+    const tipo = String(el.data.tipo ?? 'cnc');
+    return <g>{selected && <SelectionRect w={w} h={h}/>}
+      {tipo === 'cnc'
+        ? <TintedAssetImage el={el} href={cncMachineThreeQuarter} x={4} y={2} width={w-8} height={94}/>
+        : <MachineGlyph tipo={tipo} color={String(el.data.color ?? DEFAULT_TRUCK_COLOR)} />}
       {label(w/2,110)}{edit(w-2)}</g>;
   }
 
