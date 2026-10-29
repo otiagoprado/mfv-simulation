@@ -337,7 +337,7 @@ function TrailerLogo({ href, id }: { href: string; id: string }) {
   const TL = { x: 2 + 22 * sx, y: 2 + 292 * sy }; const TR = { x: 2 + 688 * sx, y: 2 + 112 * sy };
   const BL = { x: 2 + 22 * sx, y: 2 + 640 * sy }; const BR = { x: 2 + 688 * sx, y: 2 + 622 * sy };
   // Região do logo dentro da lateral (fração da largura e da altura), afastada da cabine e do friso superior.
-  const U0 = 0.12; const U1 = 0.62; const V0 = 0.2; const V1 = 0.84;
+  const U0 = 0.07; const U1 = 0.7; const V0 = 0.14; const V1 = 0.9;
   const W = 100; const H = 60; const SLICES = 12;
   const at = (u: number, v: number) => {
     const top = { x: TL.x + (TR.x - TL.x) * u, y: TL.y + (TR.y - TL.y) * u };
