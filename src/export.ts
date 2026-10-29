@@ -58,7 +58,28 @@ async function rasterize(svg: SVGSVGElement) {
   }
 }
 
-export async function exportPDF(svg: SVGSVGElement, filename: string, paperSize: PaperSize) {
+/** Captura o relatório da simulação (HTML) como imagem, expandido e sem rolagem. */
+async function captureReport(report: HTMLElement) {
+  const { default: html2canvas } = await import('html2canvas');
+  report.classList.add('exporting');
+  try {
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    return await html2canvas(report, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      logging: false,
+      width: report.scrollWidth,
+      height: report.scrollHeight,
+      windowWidth: report.scrollWidth,
+      windowHeight: report.scrollHeight,
+    });
+  } finally {
+    report.classList.remove('exporting');
+  }
+}
+
+export async function exportPDF(svg: SVGSVGElement, filename: string, paperSize: PaperSize, report?: HTMLElement) {
   const { canvas, width, height } = await rasterize(svg);
   const { jsPDF } = await import('jspdf');
   const orientation = width >= height ? 'landscape' : 'portrait';
@@ -68,26 +89,42 @@ export async function exportPDF(svg: SVGSVGElement, filename: string, paperSize:
   const margin = paperSize === 'a4' ? 8 : paperSize === 'a3' ? 10 : 12;
   const availableWidth = pageWidth - margin * 2;
   const availableHeight = pageHeight - margin * 2;
-  const ratio = Math.min(availableWidth / width, availableHeight / height);
-  const drawWidth = width * ratio;
-  const drawHeight = height * ratio;
-
-  pdf.addImage(
-    canvas.toDataURL('image/png'),
-    'PNG',
-    (pageWidth - drawWidth) / 2,
-    (pageHeight - drawHeight) / 2,
-    drawWidth,
-    drawHeight,
-    undefined,
-    'FAST',
-  );
+  const placeImage = (image: HTMLCanvasElement, imageWidth: number, imageHeight: number) => {
+    const ratio = Math.min(availableWidth / imageWidth, availableHeight / imageHeight);
+    const drawWidth = imageWidth * ratio;
+    const drawHeight = imageHeight * ratio;
+    pdf.addImage(image.toDataURL('image/png'), 'PNG', (pageWidth - drawWidth) / 2, (pageHeight - drawHeight) / 2, drawWidth, drawHeight, undefined, 'FAST');
+  };
+  placeImage(canvas, width, height);
+  if (report) {
+    // O relatório da simulação sai na página seguinte, na mesma orientação.
+    const reportCanvas = await captureReport(report);
+    pdf.addPage(paperSize, orientation);
+    placeImage(reportCanvas, reportCanvas.width, reportCanvas.height);
+  }
   pdf.save(`${filename}_${paperSize.toUpperCase()}.pdf`);
 }
 
-export async function exportJPEG(svg: SVGSVGElement, filename: string) {
+export async function exportJPEG(svg: SVGSVGElement, filename: string, report?: HTMLElement) {
   const { canvas } = await rasterize(svg);
-  download(canvas.toDataURL('image/jpeg', 0.96), `${filename}.jpg`);
+  if (!report) {
+    download(canvas.toDataURL('image/jpeg', 0.96), `${filename}.jpg`);
+    return;
+  }
+  // Mapa em cima e relatório embaixo, ajustado à largura do mapa.
+  const reportCanvas = await captureReport(report);
+  const reportHeight = Math.round(reportCanvas.height * (canvas.width / reportCanvas.width));
+  const gap = Math.round(canvas.width * 0.02);
+  const combined = document.createElement('canvas');
+  combined.width = canvas.width;
+  combined.height = canvas.height + gap + reportHeight;
+  const context = combined.getContext('2d');
+  if (!context) throw new Error('Canvas de exportação indisponível.');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, combined.width, combined.height);
+  context.drawImage(canvas, 0, 0);
+  context.drawImage(reportCanvas, 0, canvas.height + gap, canvas.width, reportHeight);
+  download(combined.toDataURL('image/jpeg', 0.96), `${filename}.jpg`);
 }
 
 export function exportSVG(svg: SVGSVGElement, filename: string) {

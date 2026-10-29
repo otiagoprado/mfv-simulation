@@ -2390,6 +2390,9 @@ export default function App() {
     try { localStorage.setItem(LIVE_ORDER_STORAGE_KEY, liveOrderInput); } catch { /* armazenamento indisponível */ }
   }, [liveOrderInput]);
   const [clipboardNotice, setClipboardNotice] = useState('');
+  const [reportSnapshot, setReportSnapshot] = useState<ReturnType<typeof buildLiveReport> | null>(null);
+  const [reportVisible, setReportVisible] = useState(true);
+  const reportRef = useRef<HTMLElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const leanFloatingRef = useRef<HTMLDivElement>(null);
   const dragMovedRef = useRef(false);
@@ -2422,6 +2425,7 @@ export default function App() {
     setLeanUndoStack([]);
     setLiveRunning(false);
     setLiveElapsedSec(0);
+    setReportSnapshot(null);
   }, [activeKind, workspace.activeFutureId]);
 
   useEffect(() => {
@@ -2997,8 +3001,16 @@ export default function App() {
   const liveCompleted = liveFlow.completed;
   const liveWip = liveFlow.wip;
   const liveOrder = liveFlow.order;
-  // Relatório abaixo do mapa: aparece com a simulação pausada ou concluída.
+  // Relatório abaixo do mapa: gerado quando a simulação pausa ou conclui e mantido até a próxima simulação.
   const liveReport = liveElapsedSec > 0 && simulation.processElements.length ? buildLiveReport(liveFlow, simulation, liveElapsedSec) : null;
+  useEffect(() => {
+    if (!liveRunning && liveReport) {
+      setReportSnapshot(liveReport);
+      setReportVisible(true);
+    }
+    // Só reage à pausa/conclusão; o relatório em si deriva do tempo simulado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveRunning, liveElapsedSec]);
   useEffect(() => {
     if (liveOrder?.done && liveRunning) {
       setLiveRunning(false);
@@ -3165,6 +3177,9 @@ export default function App() {
           <div className="header-actions">
             {activeKind === 'future' && <button className="future-sync-status" onClick={() => setComparisonOpen(true)} title="Comparar todos os cenários com o Estado atual">
               <BarChart3 size={15}/><span>Comparar</span>
+            </button>}
+            {reportSnapshot && !reportVisible && !liveRunning && <button className="live-report-reopen" onClick={() => setReportVisible(true)} title="Reabrir o relatório da última simulação">
+              <BarChart3 size={14}/><span>Relatório</span>
             </button>}
             <label className="live-order-field header" title="Quantidade da ordem de produção a simular. Vazio: fluxo contínuo no ritmo da demanda."><span>Ordem</span>
               <input type="number" min={0} step={1} placeholder="contínuo" value={liveOrderInput} onChange={(event) => setLiveOrderInput(event.target.value)} aria-label="Quantidade da ordem de produção" />
@@ -3379,7 +3394,8 @@ export default function App() {
           </div>
         )}
         {clipboardNotice && <div className="clipboard-toast"><Copy size={14}/><span>{clipboardNotice}</span></div>}
-        {liveReport && !liveRunning && <LiveReportPanel report={liveReport} daySeconds={simulatedDaySeconds} />}
+        {reportSnapshot && <LiveReportPanel report={reportSnapshot} daySeconds={simulatedDaySeconds} containerRef={reportRef}
+          hidden={!reportVisible || liveRunning} onClose={() => setReportVisible(false)} />}
       </main>
 
       {editingEl && editingEl.kind === 'identification' && (
@@ -3399,7 +3415,7 @@ export default function App() {
           onDelete={() => deleteArrow(editingArrow.id)}
           onClose={() => setEditingArrow(null)} />
       )}
-      {exportOpen && <ExportModal svgRef={svgRef} name={activeKind==='current'?'Estado_Atual':`Estado_Futuro_${activeFuture.name.replace(/[^a-z0-9]+/gi,'_')}`} onClose={() => setExportOpen(false)} />}
+      {exportOpen && <ExportModal svgRef={svgRef} reportRef={reportSnapshot ? reportRef : undefined} name={activeKind==='current'?'Estado_Atual':`Estado_Futuro_${activeFuture.name.replace(/[^a-z0-9]+/gi,'_')}`} onClose={() => setExportOpen(false)} />}
       {demandOpen && <DemandModal assumptions={canvas.assumptions} canvas={canvas}
         planning={canvas.elements.find((element) => element.id === FIXED_PLANNING_ID)!}
         onSave={saveAssumptions}
@@ -3454,6 +3470,7 @@ function ManualModal({ onClose }: { onClose: () => void }) {
       bullets: [
         'Dê duplo clique em uma caixa para editar nome, tempos, quantidade, disponibilidade, qualidade e dimensões.',
         'Na simulação ao vivo, informe a quantidade da Ordem de produção para simular uma ordem: todo o insumo entra de uma vez e o painel mostra quando a primeira e a última unidade ficam prontas e o tempo total. Vazio, a simulação segue o ritmo da demanda.',
+        'Ao pausar ou concluir a simulação, o Relatório da simulação aparece abaixo do mapa (tempo médio por unidade, gráficos e tabela por processo). Ele fica disponível pelo botão Relatório e sai junto com o mapa nas exportações em PDF e JPEG.',
         'Nos processos, Peças por ciclo indica quantas peças um ciclo produz de uma vez (ex.: masseira que faz massa para 5 pães em 60 s): a capacidade usa o tempo por peça e a simulação processa o grupo junto. O campo Lote de produção define o fluxo: 1 é peça a peça; maior que 1 é fabricação por lotes: a peça entra em produção assim que chega, mas o lote só segue ao próximo processo quando todas as suas peças ficam prontas.',
         'Arraste o elemento para mover. Nas setas, arraste o corpo para mover e as pontas para redimensionar ou conectar.',
         'Selecione um elemento e use Delete para excluir. A caixa de Controle da Produção é fixa e não pode ser removida.',
@@ -3649,7 +3666,7 @@ function StressTestModal({ canvas, onFocus, onClose }: {
 
 // ─── Modal exportação ─────────────────────────────────────────────────────────
 
-function ExportModal({ svgRef, name, onClose }: { svgRef: React.RefObject<SVGSVGElement>; name: string; onClose: () => void }) {
+function ExportModal({ svgRef, reportRef, name, onClose }: { svgRef: React.RefObject<SVGSVGElement>; reportRef?: React.RefObject<HTMLElement>; name: string; onClose: () => void }) {
   const [loading, setLoading] = useState<string|null>(null);
   const [paperSize, setPaperSize] = useState<PaperSize>('a3');
   const [error, setError] = useState<string|null>(null);
@@ -3665,8 +3682,9 @@ function ExportModal({ svgRef, name, onClose }: { svgRef: React.RefObject<SVGSVG
     setError(null);
     try {
       const filename = `MFV_${name}`;
-      if (fmt === 'pdf') await exportPDF(svg, filename, paperSize);
-      if (fmt === 'jpeg') await exportJPEG(svg, filename);
+      const report = reportRef?.current ?? undefined;
+      if (fmt === 'pdf') await exportPDF(svg, filename, paperSize, report);
+      if (fmt === 'jpeg') await exportJPEG(svg, filename, report);
       if (fmt === 'svg') exportSVG(svg, filename);
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : 'Não foi possível exportar o MFV.');

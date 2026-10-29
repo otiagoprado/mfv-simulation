@@ -1,17 +1,19 @@
 // Relatório da simulação ao vivo, exibido abaixo do mapa: indicadores, gráficos e tabela por processo.
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, BarChart3 } from 'lucide-react';
+import { ChevronDown, ChevronUp, BarChart3, X } from 'lucide-react';
 import type { LiveReport as LiveReportData, LiveReportProcess } from './live-report';
 
-// Cores fixas por papel (identidade), nunca por posição.
+// Paleta Apple fixa por significado: azul = positivo / produção, vermelho = fora do padrão,
+// âmbar = atenção, cinza = neutro. Nunca por posição.
+const APPLE = { blue: '#0a84ff', red: '#ff3b30', amber: '#ff9f0a', gray: '#8e8e93', gray3: '#c7c7cc' };
 const COLORS = {
-  completed: '#0a84ff',
-  launched: '#8e8e93',
-  queue: '#ff9f0a',
-  processing: '#0a84ff',
-  holding: '#af52de',
-  transit: '#aeaeb2',
-  critical: '#ff453a',
+  completed: APPLE.blue,
+  launched: APPLE.gray,
+  processing: APPLE.blue,
+  queue: APPLE.amber,
+  holding: APPLE.red,
+  transit: APPLE.gray3,
+  critical: APPLE.red,
 };
 
 const formatNumber = (value: number, digits = 0) => value.toLocaleString('pt-BR', { maximumFractionDigits: digits });
@@ -197,14 +199,21 @@ function CompositionDonut({ report }: { report: LiveReportData }) {
   </div>;
 }
 
-export function LiveReportPanel({ report, daySeconds }: { report: LiveReportData; daySeconds: number }) {
+export function LiveReportPanel({ report, daySeconds, hidden = false, onClose, containerRef }: {
+  report: LiveReportData;
+  daySeconds: number;
+  /** Mantém o relatório montado fora da tela (para exportação) sem exibi-lo. */
+  hidden?: boolean;
+  onClose?: () => void;
+  containerRef?: React.RefObject<HTMLElement>;
+}) {
   const [open, setOpen] = useState(true);
   const avgPerUnit = report.avgPerUnitSec;
   const taktTone = avgPerUnit !== null && report.taktTimeSec > 0 ? (avgPerUnit <= report.taktTimeSec ? 'good' : 'bad') : undefined;
   const valueAdded = report.composition.processing;
   const leadTotal = report.avgLeadTimeSec ?? 0;
   const valueAddedShare = leadTotal > 0 ? Math.round((valueAdded / leadTotal) * 100) : null;
-  return <section className={`live-report ${open ? 'open' : ''}`} aria-label="Relatório da simulação" onWheel={(event) => event.stopPropagation()}>
+  return <section ref={containerRef} className={`live-report ${open ? 'open' : ''} ${hidden ? 'offscreen' : ''}`} aria-label="Relatório da simulação" aria-hidden={hidden} onWheel={(event) => event.stopPropagation()}>
     <header className="live-report-header" onClick={() => setOpen((value) => !value)}>
       <div className="live-report-title">
         <span className="live-report-icon"><BarChart3 size={16} /></span>
@@ -215,9 +224,12 @@ export function LiveReportPanel({ report, daySeconds }: { report: LiveReportData
             : `Fluxo contínuo · parcial em ${formatWorkDuration(report.elapsedSec, daySeconds)}`}</small>
         </div>
       </div>
-      <button type="button" aria-label={open ? 'Recolher relatório' : 'Expandir relatório'}>{open ? <ChevronDown size={16} /> : <ChevronUp size={16} />}</button>
+      <div className="live-report-actions">
+        <button type="button" aria-label={open ? 'Recolher relatório' : 'Expandir relatório'}>{open ? <ChevronDown size={16} /> : <ChevronUp size={16} />}</button>
+        {onClose && <button type="button" aria-label="Fechar relatório" onClick={(event) => { event.stopPropagation(); onClose(); }}><X size={15} /></button>}
+      </div>
     </header>
-    {open && <div className="live-report-body">
+    <div className="live-report-body">
       <div className="report-stats">
         <StatTile label="Tempo médio por unidade" value={avgPerUnit !== null ? formatWorkDuration(avgPerUnit, daySeconds) : '—'}
           detail={report.taktTimeSec > 0 ? `takt ${formatWorkDuration(report.taktTimeSec, daySeconds)}` : undefined} tone={taktTone} />
@@ -253,6 +265,6 @@ export function LiveReportPanel({ report, daySeconds }: { report: LiveReportData
           </tbody>
         </table>
       </div>
-    </div>}
+    </div>
   </section>;
 }
