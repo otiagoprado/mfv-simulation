@@ -111,7 +111,7 @@ function ProcessTimeChart({ processes, bottleneckId }: { processes: LiveReportPr
         <span><i style={{ background: COLORS.holding }} />Espera do lote na saída</span>
       </div>
     </div>
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Tempo médio por unidade em cada processo">
+    <svg viewBox={`0 0  `} preserveAspectRatio="xMinYMin meet" role="img" aria-label="Tempo médio por unidade em cada processo">
       {processes.map((process, index) => {
         const yTop = index * rowH + 6;
         const segments = [
@@ -204,7 +204,7 @@ export function LiveReportPanel({ report, daySeconds }: { report: LiveReportData
   const valueAdded = report.composition.processing;
   const leadTotal = report.avgLeadTimeSec ?? 0;
   const valueAddedShare = leadTotal > 0 ? Math.round((valueAdded / leadTotal) * 100) : null;
-  return <section className={`live-report ${open ? 'open' : ''}`} aria-label="Relatório da simulação">
+  return <section className={`live-report ${open ? 'open' : ''}`} aria-label="Relatório da simulação" onWheel={(event) => event.stopPropagation()}>
     <header className="live-report-header" onClick={() => setOpen((value) => !value)}>
       <div className="live-report-title">
         <span className="live-report-icon"><BarChart3 size={16} /></span>

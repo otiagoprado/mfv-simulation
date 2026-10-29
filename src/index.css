@@ -987,7 +987,7 @@ g:hover > .edit-btn-group { opacity: 1; }
 .report-stat.bad strong { color: #d12d23; }
 .report-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; }
 .report-chart { min-width: 0; padding: 12px 14px 10px; background: #fff; border: 1px solid rgba(60,60,67,.1); border-radius: 16px; }
-.report-chart svg { width: 100%; height: auto; display: block; }
+.report-chart svg { width: 100%; max-width: 760px; height: auto; max-height: 260px; display: block; }
 .report-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .report-chart-head h4 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: -.01em; }
 .report-chart-note { color: #8e8e93; font-size: 9.5px; }
