@@ -97,17 +97,23 @@ test('a simulação ao vivo continua nos dias seguintes', () => {
   assert.ok(flow.launched > daySec / 120, `liberadas: ${flow.launched}`);
 });
 
-test('peças por ciclo: o ciclo espera encher e produz todas as peças juntas', () => {
-  // Masseira: um ciclo de 60 s faz massa para 5 pães; as peças chegam uma a cada 120 s.
-  const flow = live([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60)], 590);
+test('peças por ciclo no primeiro processo: puxa a matéria-prima do ciclo inteiro e começa na hora', () => {
+  // Masseira: um ciclo de 60 s faz massa para 5 pães; a matéria-prima já está disponível.
+  const flow = live([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60)], 90);
   assert.equal(flow.stations[0].waiting, 0);
   assert.equal(flow.stations[0].processing, 5);
   assert.equal(atStation(flow, 1).length, 0);
 });
 
-test('peças por ciclo: as 5 peças saem juntas e a seguinte espera o próximo ciclo encher', () => {
-  const flow = live([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60)], 700);
-  assert.equal(flow.stations[0].waiting, 1);
-  assert.equal(flow.stations[0].processing, 0);
-  assert.equal(atStation(flow, 1).length, 5);
+test('peças por ciclo: as 5 peças saem juntas e o próximo ciclo só começa com a demanda seguinte', () => {
+  const flow = live([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60)], 300);
+  assert.equal(atStation(flow, 0).length, 0);
+  assert.equal(flow.stations[1].processing, 1);
+  assert.equal(flow.stations[1].waiting, 2);
+});
+
+test('peças por ciclo em um processo intermediário: o ciclo espera encher com as peças que chegam', () => {
+  const flow = live([process('a', 0, 60), process('b', 300, 60, { pecasCiclo: 5 })], 590);
+  assert.equal(flow.stations[1].waiting, 4);
+  assert.equal(flow.stations[1].processing, 0);
 });

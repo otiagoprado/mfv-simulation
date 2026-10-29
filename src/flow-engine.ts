@@ -408,19 +408,6 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   const packSize = Math.max(1, Math.round(simulation.weightedPackSize));
   const fallbackSlot: HeijunkaSlot = { productId: 'product-base', name: 'Produto', code: 'P1', color: PRODUCT_SEQUENCE_COLORS[0], packSize, pitchTimeSec: simulation.pitchTimeSec };
   const sequence = simulation.leveledSequence.length ? simulation.leveledSequence : [fallbackSlot];
-  const demandedBatches: { batchIndex: number; product: HeijunkaSlot; packSize: number; releaseTime: number; interval: number }[] = [];
-  let scheduledTime = 0;
-  let batchIndex = 0;
-  while (scheduledTime <= elapsedSec && scheduledTime < availableSeconds * LIVE_MAX_DAYS && batchIndex < 5000) {
-    const product = sequence[batchIndex % sequence.length];
-    const interval = Math.max(product.pitchTimeSec, pacemakerInterval * product.packSize);
-    if (!Number.isFinite(interval) || interval <= 0) break;
-    demandedBatches.push({ batchIndex, product, packSize: product.packSize, releaseTime: scheduledTime, interval });
-    scheduledTime += interval;
-    batchIndex += 1;
-  }
-  const demandedPacks = demandedBatches.length;
-  const demanded = demandedBatches.reduce((sum, batch) => sum + batch.packSize, 0);
   const stations: LiveStation[] = simulation.processMetrics.map((metric) => ({
     id: metric.element.id,
     batchMode: metric.batch.mode === 'lote',
@@ -431,10 +418,28 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     // No fluxo unitário o setup é diluído por peça (tempo efetivo); por lote ele entra no início do lote.
     cycleSec: (metric.batch.mode === 'lote' ? metric.batch.runCycleSec : metric.effectiveCycleSec) * metric.batch.piecesPerCycle,
   }));
+  // O primeiro processo é alimentado pela matéria-prima, que já está disponível: um ciclo de várias
+  // peças puxa o material do ciclo inteiro de uma vez, então as liberações são agrupadas por ciclo.
+  const firstCycle = stations[0]?.piecesPerCycle ?? 1;
+  const demandedBatches: { batchIndex: number; product: HeijunkaSlot; packSize: number; releaseTime: number; interval: number }[] = [];
+  let scheduledTime = 0;
+  let batchIndex = 0;
+  let unitsSoFar = 0;
+  while ((scheduledTime <= elapsedSec || unitsSoFar % firstCycle !== 0) && scheduledTime < availableSeconds * LIVE_MAX_DAYS && batchIndex < 5000) {
+    const product = sequence[batchIndex % sequence.length];
+    const interval = Math.max(product.pitchTimeSec, pacemakerInterval * product.packSize);
+    if (!Number.isFinite(interval) || interval <= 0) break;
+    demandedBatches.push({ batchIndex, product, packSize: product.packSize, releaseTime: scheduledTime, interval });
+    scheduledTime += interval;
+    batchIndex += 1;
+    unitsSoFar += product.packSize;
+  }
+  const demandedPacks = demandedBatches.length;
+  const demanded = demandedBatches.reduce((sum, batch) => sum + batch.packSize, 0);
   const finalLegSec = LIVE_TRANSIT_SEC + simulation.waitingTimeMin * 60;
   const shippingLot = simulation.shippingLot;
   const units = demandedBatches.flatMap((batch) => Array.from({ length: batch.packSize }, () => batch));
-  const scheduled = units.map((batch) => batch.releaseTime);
+  const scheduled = units.map((batch, unit) => firstCycle > 1 ? units[Math.floor(unit / firstCycle) * firstCycle].releaseTime : batch.releaseTime);
   const wipLimit = simulation.pullSystemActive ? Math.max(1, simulation.pullWipLimit) : Infinity;
 
   // Linha do tempo de cada peça em cada processo: chegada, início, fim da produção e saída.
