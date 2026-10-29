@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { DEFAULT_TRUCK_COLOR, type CanvasElement } from './canvas-types';
 import { percentValue } from './numbers';
 import { batchSizeOf, piecesPerCycleOf } from './batch';
@@ -362,14 +363,70 @@ function TrailerLogo({ href, id, fit }: { href: string; id: string; fit: 'ajusta
   </g>;
 }
 
+const imageBackgroundCache = new Map<string, string | null>();
+
+/**
+ * Cor de fundo de uma imagem: média dos pixels opacos ao longo das bordas.
+ * Devolve null quando as bordas são transparentes (logo sem fundo).
+ */
+function useImageBackground(href: string) {
+  const [color, setColor] = useState<string | null>(() => (href ? imageBackgroundCache.get(href) ?? null : null));
+  useEffect(() => {
+    if (!href) { setColor(null); return; }
+    if (imageBackgroundCache.has(href)) { setColor(imageBackgroundCache.get(href) ?? null); return; }
+    let cancelled = false;
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      try {
+        const size = 48;
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const context = canvas.getContext('2d');
+        if (!context) return;
+        context.drawImage(image, 0, 0, size, size);
+        const data = context.getImageData(0, 0, size, size).data;
+        let r = 0; let g = 0; let b = 0; let count = 0;
+        for (let y = 0; y < size; y += 1) {
+          for (let x = 0; x < size; x += 1) {
+            const onBorder = x < 2 || y < 2 || x >= size - 2 || y >= size - 2;
+            if (!onBorder) continue;
+            const index = (y * size + x) * 4;
+            if (data[index + 3] < 64) continue;
+            r += data[index]; g += data[index + 1]; b += data[index + 2]; count += 1;
+          }
+        }
+        const result = count >= 24
+          ? `#${[r, g, b].map((channel) => Math.round(channel / count).toString(16).padStart(2, '0')).join('')}`
+          : null;
+        imageBackgroundCache.set(href, result);
+        if (!cancelled) setColor(result);
+      } catch {
+        imageBackgroundCache.set(href, null);
+        if (!cancelled) setColor(null);
+      }
+    };
+    image.onerror = () => { if (!cancelled) setColor(null); };
+    image.src = href;
+    return () => { cancelled = true; };
+  }, [href]);
+  return color;
+}
+
 export function TruckSymbol({ el, selected, onEdit, companyImage }: SymProps) {
   const w = 210; const h = 130;
   const logoSource = String(el.data.logoFonte ?? 'nenhum');
   const logo = logoSource === 'empresa' ? (companyImage ?? '') : logoSource === 'proprio' ? String(el.data.logo ?? '') : '';
+  const paintTrailer = String(el.data.logoFundo ?? 'auto') === 'auto';
+  const logoBackground = useImageBackground(paintTrailer ? logo : '');
+  // Lateral do baú (mesmos cantos do logo, com margem até as bordas) pintada na cor de fundo do logo.
+  const sx = 206 / 1681; const sy = 108 / 935;
+  const trailerSide = [[22, 284], [690, 104], [690, 626], [22, 644]].map(([x, y]) => `${2 + x * sx},${2 + y * sy}`).join(' ');
   return (
     <g>
       {selected && <SelectionRect w={w} h={h} />}
       <TintedAssetImage el={el} href={truckThreeQuarter} x={2} y={2} width={206} height={108} />
+      {logo && logoBackground && <polygon points={trailerSide} fill={logoBackground} style={{ mixBlendMode: 'multiply' }} />}
       {logo && <TrailerLogo href={logo} id={el.id} fit={String(el.data.logoAjuste ?? 'ajustar') === 'preencher' ? 'preencher' : 'ajustar'} />}
       {el.label && <text x={w/2} y={120} textAnchor="middle" fontSize={8} fontFamily="Arial" fill="#34383e" fontWeight="700">{el.label}</text>}
       {el.data.freq && <text x={w/2} y={129} textAnchor="middle" fontSize={6.5} fontFamily="Arial" fill="#6b7178">a cada {el.data.freq} dia(s)</text>}
