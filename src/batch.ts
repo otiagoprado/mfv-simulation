@@ -10,7 +10,11 @@ export interface BatchSettings {
   /** Unidades liberadas juntas ao próximo processo (igual ao lote de produção). */
   transferBatch: number;
   setupMin: number;
-  /** Tempo por unidade sem setup, já considerando recursos paralelos e disponibilidade. */
+  /** Peças produzidas juntas em um ciclo (ex.: masseira que faz massa para 5 pães por ciclo). */
+  piecesPerCycle: number;
+  /** Duração de um ciclo completo (todas as peças do ciclo), já com recursos paralelos e disponibilidade. */
+  cycleSec: number;
+  /** Tempo médio por unidade sem setup (ciclo dividido pelas peças por ciclo). */
   runCycleSec: number;
 }
 
@@ -24,6 +28,11 @@ export interface BatchLeadTime {
 
 export function batchSizeOf(data: CanvasElement['data']): number {
   return Math.max(1, Math.round(Number(data.lote) || 1));
+}
+
+/** Peças produzidas juntas em um ciclo; 1 é uma peça por ciclo. */
+export function piecesPerCycleOf(data: CanvasElement['data']): number {
+  return Math.max(1, Math.round(Number(data.pecasCiclo) || 1));
 }
 
 /** Lote de produção maior que 1 significa fabricação por lotes; lote 1 é fluxo contínuo, peça a peça. */
@@ -40,12 +49,16 @@ export function batchSettings(element: Pick<CanvasElement, 'data'>): BatchSettin
   const resources = Math.max(1, Number(data.recurso) || 1);
   const availability = Math.min(100, Math.max(1, percentValue(data.disp))) / 100;
   const cycleTime = Math.max(0, Number(data.tc) || 0);
+  const piecesPerCycle = piecesPerCycleOf(data);
+  const cycleSec = cycleTime / (resources * availability);
   return {
     mode,
     batchSize,
     transferBatch,
     setupMin: Math.max(0, Number(data.setup) || 0),
-    runCycleSec: cycleTime / (resources * availability),
+    piecesPerCycle,
+    cycleSec,
+    runCycleSec: cycleSec / piecesPerCycle,
   };
 }
 

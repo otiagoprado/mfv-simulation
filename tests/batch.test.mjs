@@ -72,3 +72,10 @@ test('setup do lote ocupa o processo antes da produção', () => {
   const withoutSetup = runStressTest(line({ lote: 50 }), assumptions, baseSettings);
   assert.ok(withSetup.deliveredUnits < withoutSetup.deliveredUnits);
 });
+
+test('peças por ciclo dividem o tempo de ciclo entre as peças', () => {
+  const settings = batchSettings({ data: { tc: 60, lote: 1, pecasCiclo: 5 } });
+  assert.equal(settings.piecesPerCycle, 5);
+  assert.equal(settings.cycleSec, 60);
+  assert.equal(settings.runCycleSec, 12);
+});

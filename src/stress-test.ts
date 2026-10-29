@@ -1,5 +1,5 @@
 // Extensão explícita: os testes executam este arquivo direto no Node.
-import { batchSettings, type BatchSettings } from './batch.ts';
+import { batchSettings, piecesPerCycleOf, type BatchSettings } from './batch.ts';
 import { percentValue } from './numbers.ts';
 import type { CanvasArrow, CanvasElement, ScenarioAssumptions } from './canvas-types';
 import { materialFlowOrder } from './flow-order.ts';
@@ -94,7 +94,7 @@ function prepareProcesses(elements: CanvasElement[], arrows: CanvasArrow[]) {
   const stocks = elements.filter(isStock);
 
   return rawProcesses.map((element, index): PreparedProcess => {
-    const cycleTime = Math.max(0, Number(element.data.tc) || 0);
+    const cycleTime = Math.max(0, Number(element.data.tc) || 0) / piecesPerCycleOf(element.data);
     const setupPerUnitSec = (Math.max(0, Number(element.data.setup) || 0) * 60)
       / Math.max(1, Number(element.data.lote) || 1);
     const resources = Math.max(1, Number(element.data.recurso) || 1);

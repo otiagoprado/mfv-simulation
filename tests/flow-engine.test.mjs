@@ -57,3 +57,9 @@ test('kanban recomenda cartões pela demanda durante a reposição', () => {
   close(sizing.demandDuringReplenishment, 30);
   assert.equal(sizing.recommendedCards, 6);
 });
+
+test('peças por ciclo multiplicam a capacidade do processo', () => {
+  const single = calculateCanvasSimulation(canvas([process('a', 0, 60)]));
+  const five = calculateCanvasSimulation(canvas([process('a', 0, 60, { pecasCiclo: 5 })]));
+  close(five.processMetrics[0].capacityPerDay, single.processMetrics[0].capacityPerDay * 5);
+});

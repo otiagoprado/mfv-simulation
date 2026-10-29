@@ -1,6 +1,6 @@
 import { DEFAULT_TRUCK_COLOR, type CanvasElement } from './canvas-types';
 import { percentValue } from './numbers';
-import { batchSizeOf } from './batch';
+import { batchSizeOf, piecesPerCycleOf } from './batch';
 import truckThreeQuarter from './assets/truck-three-quarter.png';
 import cargoAirplaneThreeQuarter from './assets/cargo-airplane-three-quarter.png';
 import cargoShipThreeQuarter from './assets/cargo-ship-three-quarter.png';
@@ -130,19 +130,20 @@ function TintedAssetImage({ el, href, x, y, width, height }: {
 export function ProcessSymbol({ el, selected, onEdit, taktTimeSec = 0, availableMinutesPerDay = 0, accentColor, processLoadPercent, processCapacityPerDay }: SymProps) {
   const w = 150; const h = 160;
   const colors = theme(accentColor);
-  const cycleTime = Math.max(0, Number(el.data.tc) || 0);
+  const piecesPerCycle = piecesPerCycleOf(el.data);
+  const cycleTime = Math.max(0, Number(el.data.tc) || 0) / piecesPerCycle;
   const setupPerUnit = (Math.max(0, Number(el.data.setup) || 0) * 60) / Math.max(1, Number(el.data.lote) || 1);
   const availability = Math.min(100, Math.max(1, percentValue(el.data.disp))) / 100;
   const resources = Math.max(1, Number(el.data.recurso) || 1);
   const effectiveCycle = (cycleTime + setupPerUnit) / (resources * availability);
   const localLoadPercent = taktTimeSec > 0 ? (effectiveCycle / taktTimeSec) * 100 : 0;
   const loadPercent = processLoadPercent ?? localLoadPercent;
-  const valid = cycleTime > 0;
+  const valid = Number(el.data.tc) > 0;
   const overloaded = valid && loadPercent > 100;
   const capacityPerDay = processCapacityPerDay ?? (effectiveCycle > 0 ? (availableMinutesPerDay * 60) / effectiveCycle : 0);
   const rows = [
     { k: 'Nº operador', v: `${el.data.op ?? 1}` },
-    { k: 'T/C', v: `${el.data.tc ?? 0} s` },
+    { k: 'T/C', v: piecesPerCycle > 1 ? `${el.data.tc ?? 0} s · ${piecesPerCycle} un/ciclo` : `${el.data.tc ?? 0} s` },
     { k: 'Setup / lote', v: `${el.data.setup ?? 0} min · ${el.data.lote ?? 1} un` },
     { k: 'Recurso', v: `${el.data.recurso ?? 1}` },
     { k: 'Disponib.', v: `${el.data.disp ?? 100}%` },

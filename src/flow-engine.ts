@@ -1,6 +1,6 @@
 // Motor de cálculo do MFV: takt, nivelamento, kanban, carga dos processos, lead time e fluxo ao vivo.
 // Fica fora do App.tsx para ser testado direto no Node (por isso os imports com extensão .ts).
-import { batchLeadTime, batchSettings } from './batch.ts';
+import { batchLeadTime, batchSettings, piecesPerCycleOf } from './batch.ts';
 import { LIBRARY, makeId, type CanvasElement, type CanvasState, type ElementKind, type ProductMixItem, type ScenarioAssumptions } from './canvas-types.ts';
 import { materialFlowOrder } from './flow-order.ts';
 import { percentValue } from './numbers.ts';
@@ -136,7 +136,9 @@ export function calculateKanbanSizing(element: CanvasElement, assumptions: Scena
 }
 
 export function calculateProcessLoad(element: CanvasElement, dailyDemand: number, cumulativeYield: number, availableMinutesPerDay: number) {
-  const cycleTime = Math.max(0, Number(element.data.tc) || 0);
+  const rawCycleTime = Math.max(0, Number(element.data.tc) || 0);
+  // Um ciclo pode produzir várias peças de uma vez; o tempo por peça é o ciclo dividido por elas.
+  const cycleTime = rawCycleTime / piecesPerCycleOf(element.data);
   const setupPerUnit = (Math.max(0, Number(element.data.setup) || 0) * 60)
     / Math.max(1, Number(element.data.lote) || 1);
   const resources = Math.max(1, Number(element.data.recurso) || 1);
@@ -150,7 +152,7 @@ export function calculateProcessLoad(element: CanvasElement, dailyDemand: number
   const loadPercent = rawCapacityPerDay > 0 && Number.isFinite(requiredInputPerDay)
     ? (requiredInputPerDay / rawCapacityPerDay) * 100
     : 0;
-  const valid = cycleTime > 0;
+  const valid = rawCycleTime > 0;
   return { effectiveCycleSec, loadPercent, valid, overloaded: valid && loadPercent > 100, capacityPerDay, requiredInputPerDay };
 }
 
@@ -387,8 +389,10 @@ interface LiveStation {
   batchSize: number;
   transferBatch: number;
   setupSec: number;
-  runSec: number;
-  unitSec: number;
+  /** Peças processadas juntas em um ciclo. */
+  piecesPerCycle: number;
+  /** Duração de um ciclo (todas as suas peças). */
+  cycleSec: number;
 }
 
 /**
@@ -423,8 +427,9 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     batchSize: metric.batch.batchSize,
     transferBatch: metric.batch.transferBatch,
     setupSec: metric.batch.setupMin * 60,
-    runSec: metric.batch.runCycleSec,
-    unitSec: metric.effectiveCycleSec,
+    piecesPerCycle: metric.batch.piecesPerCycle,
+    // No fluxo unitário o setup é diluído por peça (tempo efetivo); por lote ele entra no início do lote.
+    cycleSec: (metric.batch.mode === 'lote' ? metric.batch.runCycleSec : metric.effectiveCycleSec) * metric.batch.piecesPerCycle,
   }));
   const finalLegSec = LIVE_TRANSIT_SEC + simulation.waitingTimeMin * 60;
   const shippingLot = simulation.shippingLot;
@@ -445,25 +450,31 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
       const stationFinish = units.map(() => Infinity);
       const stationDepart = units.map(() => Infinity);
       let freeAt = 0;
+      // Um ciclo processa até `piecesPerCycle` peças juntas (ex.: masseira para 5 pães): espera o ciclo
+      // encher e produz todas ao mesmo tempo. Com 1 peça por ciclo é o fluxo peça a peça.
+      // O setup por lote entra no ciclo que começa um lote novo.
+      let next = 0;
+      while (next < units.length && Number.isFinite(stationArrival[next])) {
+        const members: number[] = [];
+        while (members.length < station.piecesPerCycle && next < units.length && Number.isFinite(stationArrival[next])) {
+          members.push(next);
+          next += 1;
+        }
+        const ready = Math.max(...members.map((unit) => stationArrival[unit]));
+        const setup = station.batchMode && members.some((unit) => unit % station.batchSize === 0) ? station.setupSec : 0;
+        const start = Math.max(ready, freeAt);
+        const finish = start + setup + station.cycleSec;
+        members.forEach((unit) => {
+          stationStart[unit] = start;
+          stationFinish[unit] = finish;
+        });
+        freeAt = finish;
+      }
       if (!station.batchMode) {
-        units.forEach((_, unit) => {
-          if (!Number.isFinite(stationArrival[unit])) return;
-          stationStart[unit] = Math.max(stationArrival[unit], freeAt);
-          stationFinish[unit] = stationStart[unit] + station.unitSec;
-          stationDepart[unit] = stationFinish[unit];
-          freeAt = stationFinish[unit];
-        });
+        units.forEach((_, unit) => { stationDepart[unit] = stationFinish[unit]; });
       } else {
-        // O lote é regra de saída, não de entrada: cada peça entra em produção assim que chega
-        // (setup antes da primeira peça de cada lote) e fica no buffer de saída até o lote completar.
-        units.forEach((_, unit) => {
-          if (!Number.isFinite(stationArrival[unit])) return;
-          const setup = unit % station.batchSize === 0 ? station.setupSec : 0;
-          stationStart[unit] = Math.max(stationArrival[unit], freeAt);
-          stationFinish[unit] = stationStart[unit] + setup + station.runSec;
-          freeAt = stationFinish[unit];
-        });
-        // O lote inteiro segue junto quando a última peça dele fica pronta.
+        // O lote é regra de saída, não de entrada: a peça entra em produção assim que chega
+        // e fica no buffer de saída até o lote completar. O lote inteiro segue junto quando a última fica pronta.
         for (let first = 0; first < units.length; first += station.batchSize) {
           const members = Array.from({ length: Math.min(station.batchSize, units.length - first) }, (_, offset) => first + offset);
           const complete = members.length === station.batchSize && members.every((unit) => Number.isFinite(stationFinish[unit]));
