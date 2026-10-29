@@ -9,7 +9,45 @@ function download(url: string, filename: string) {
   link.click();
 }
 
-function croppedSvg(svg: SVGSVGElement) {
+const imageDataCache = new Map<string, Promise<string>>();
+
+/** Converte a URL de uma imagem (PNG dos símbolos) em data URL para o SVG exportado ser autocontido. */
+function imageAsDataUrl(url: string) {
+  const cached = imageDataCache.get(url);
+  if (cached) return cached;
+  const pending = fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Imagem indisponível: ${url}`);
+      return response.blob();
+    })
+    .then((blob) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error(`Não foi possível ler a imagem ${url}`));
+      reader.readAsDataURL(blob);
+    }));
+  imageDataCache.set(url, pending);
+  return pending;
+}
+
+/** Embute todas as imagens externas do SVG: ao desenhar o SVG fora da página, referências por URL não carregam. */
+async function inlineImages(root: SVGElement) {
+  const images = Array.from(root.querySelectorAll('image'));
+  await Promise.all(images.map(async (image) => {
+    const href = image.getAttribute('href') ?? image.getAttribute('xlink:href') ?? image.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+    if (!href || href.startsWith('data:')) return;
+    try {
+      const dataUrl = await imageAsDataUrl(new URL(href, window.location.href).toString());
+      image.setAttribute('href', dataUrl);
+      image.removeAttribute('xlink:href');
+      image.removeAttributeNS('http://www.w3.org/1999/xlink', 'href');
+    } catch {
+      // Sem a imagem, o símbolo sai sem a figura em vez de impedir a exportação.
+    }
+  }));
+}
+
+async function croppedSvg(svg: SVGSVGElement) {
   const content = svg.querySelector<SVGGElement>('[data-export-content]');
   if (!content) throw new Error('Conteúdo do MFV não encontrado.');
 
@@ -19,6 +57,7 @@ function croppedSvg(svg: SVGSVGElement) {
   const clone = content.cloneNode(true) as SVGGElement;
   clone.removeAttribute('transform');
   clone.querySelectorAll('[data-export-ui], .edit-btn-group, .selection-rect').forEach((node) => node.remove());
+  await inlineImages(clone);
 
   const x = bounds.x - EXPORT_PADDING;
   const y = bounds.y - EXPORT_PADDING;
@@ -31,7 +70,7 @@ function croppedSvg(svg: SVGSVGElement) {
 }
 
 async function rasterize(svg: SVGSVGElement) {
-  const cropped = croppedSvg(svg);
+  const cropped = await croppedSvg(svg);
   const blob = new Blob([cropped.source], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   try {
@@ -127,8 +166,8 @@ export async function exportJPEG(svg: SVGSVGElement, filename: string, report?: 
   download(combined.toDataURL('image/jpeg', 0.96), `${filename}.jpg`);
 }
 
-export function exportSVG(svg: SVGSVGElement, filename: string) {
-  const { source } = croppedSvg(svg);
+export async function exportSVG(svg: SVGSVGElement, filename: string) {
+  const { source } = await croppedSvg(svg);
   const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   download(url, `${filename}.svg`);

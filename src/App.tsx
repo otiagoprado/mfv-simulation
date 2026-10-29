@@ -3685,7 +3685,7 @@ function ExportModal({ svgRef, reportRef, name, onClose }: { svgRef: React.RefOb
       const report = reportRef?.current ?? undefined;
       if (fmt === 'pdf') await exportPDF(svg, filename, paperSize, report);
       if (fmt === 'jpeg') await exportJPEG(svg, filename, report);
-      if (fmt === 'svg') exportSVG(svg, filename);
+      if (fmt === 'svg') await exportSVG(svg, filename);
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : 'Não foi possível exportar o MFV.');
     } finally {
