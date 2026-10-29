@@ -133,6 +133,7 @@ test('ordem de produção: todo o insumo entra de uma vez e o relatório dá a p
   assert.equal(early.order.firstDoneSec, 540);
   // Últimas 2: ciclo parcial 120-180, chegam em b 240, produzidas 480-600, lote parcial fecha em 600, saída 660.
   assert.equal(early.order.lastDoneSec, 660);
+  assert.equal(early.order.deliveredSec, 660);
   assert.equal(early.order.done, false);
   const finished = order([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60, { lote: 5 })], 700, 7);
   assert.equal(finished.completed, 7);
@@ -142,4 +143,15 @@ test('ordem de produção: todo o insumo entra de uma vez e o relatório dá a p
 test('sem ordem de produção o relatório não existe e o fluxo segue a demanda', () => {
   const flow = live([process('a', 0, 60)], 600);
   assert.equal(flow.order, null);
+});
+
+test('ordem de produção: o lote de expedição atrasa a entrega, não o momento em que a unidade fica pronta', () => {
+  const shipping = { id: 'ship', kind: 'shipping-point', x: 900, y: 0, label: 'Expedição', data: { lote: 4000 } };
+  const canvas = { elements: [process('a', 0, 60), shipping], arrows: [], assumptions, themeColor: '#0071e3' };
+  const flow = calculateLiveFlow(calculateCanvasSimulation(canvas), assumptions, 10 * 60, { orderQuantity: 3 });
+  // Peças prontas em 180, 240 e 300 s (+60 s de trânsito final); entregues juntas com o lote parcial.
+  assert.equal(flow.order.firstDoneSec, 180);
+  assert.equal(flow.order.lastDoneSec, 300);
+  assert.equal(flow.order.deliveredSec, 300);
+  assert.equal(flow.completed, 3);
 });

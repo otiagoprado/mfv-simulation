@@ -573,11 +573,14 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   const launched = launchedUnits.length;
   const completionInterval = simulation.bottleneckCapacity > 0 ? availableSeconds / simulation.bottleneckCapacity : Infinity;
   // Relatório da ordem: quando a primeira e a última unidade ficam prontas (tempo de fluxo, sem contar o dia).
+  // "Pronta" é a chegada à expedição; "entregue" inclui a espera pelo lote de expedição.
+  const ready = timeline.shippingArrival.filter(Number.isFinite);
   const exits = timeline.exit.filter(Number.isFinite);
   const order = orderMode ? {
     quantity: orderQuantity,
-    firstDoneSec: exits.length ? Math.min(...exits) : null,
-    lastDoneSec: exits.length === units.length && units.length > 0 ? Math.max(...exits) : null,
+    firstDoneSec: ready.length ? Math.min(...ready) : null,
+    lastDoneSec: ready.length === units.length && units.length > 0 ? Math.max(...ready) : null,
+    deliveredSec: exits.length === units.length && units.length > 0 ? Math.max(...exits) : null,
     done: units.length > 0 && timeline.exit.every((time) => time <= elapsedSec),
   } : null;
   return {

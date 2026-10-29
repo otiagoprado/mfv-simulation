@@ -2998,9 +2998,9 @@ export default function App() {
   useEffect(() => {
     if (liveOrder?.done && liveRunning) {
       setLiveRunning(false);
-      if (liveOrder.lastDoneSec !== null) setLiveElapsedSec(liveOrder.lastDoneSec);
+      if (liveOrder.deliveredSec !== null) setLiveElapsedSec(liveOrder.deliveredSec);
     }
-  }, [liveOrder?.done, liveOrder?.lastDoneSec, liveRunning]);
+  }, [liveOrder?.done, liveOrder?.deliveredSec, liveRunning]);
   // Tempo de trabalho decorrido: "2 h 05 min", ou com os dias úteis quando passa de um dia.
   const formatWorkTime = (seconds: number) => {
     const days = Math.floor(seconds / simulatedDaySeconds);
@@ -3204,8 +3204,8 @@ export default function App() {
             <div className={liveWip > 0 ? 'attention' : ''}><span>Unidades em processo</span><strong>{liveWip}</strong></div>
             {liveOrder ? <>
               <div className={liveOrder.firstDoneSec !== null && liveOrder.firstDoneSec <= liveElapsedSec ? 'healthy' : ''}><span>1ª unidade pronta</span><strong>{liveOrder.firstDoneSec !== null && liveOrder.firstDoneSec <= liveElapsedSec ? formatWorkTime(liveOrder.firstDoneSec) : '—'}</strong></div>
-              <div className={liveOrder.done ? 'healthy' : ''}><span>Última unidade</span><strong>{liveOrder.done && liveOrder.lastDoneSec !== null ? formatWorkTime(liveOrder.lastDoneSec) : '—'}</strong></div>
-              <div className={liveOrder.done ? 'healthy' : ''}><span>Tempo total da ordem</span><strong>{liveOrder.done && liveOrder.lastDoneSec !== null ? formatWorkTime(liveOrder.lastDoneSec) : 'em andamento'}</strong></div>
+              <div className={liveOrder.lastDoneSec !== null && liveOrder.lastDoneSec <= liveElapsedSec ? 'healthy' : ''}><span>Última unidade pronta</span><strong>{liveOrder.lastDoneSec !== null && liveOrder.lastDoneSec <= liveElapsedSec ? formatWorkTime(liveOrder.lastDoneSec) : '—'}</strong></div>
+              <div className={liveOrder.done ? 'healthy' : ''} title="Inclui a espera pelo lote de expedição"><span>Ordem entregue em</span><strong>{liveOrder.done && liveOrder.deliveredSec !== null ? formatWorkTime(liveOrder.deliveredSec) : 'em andamento'}</strong></div>
             </> : <div className={simulation.overloadedProcesses.length ? 'critical' : 'healthy'}><span>Situação</span><strong>{simulation.overloadedProcesses.length ? `${simulation.overloadedProcesses.length} quebra(m)` : 'Fluxo atende'}</strong></div>}
           </div>
           <div className="live-day-progress" title={`Dia ${liveDay} de ${LIVE_MAX_DAYS}`}><i style={{ width: `${Math.min(100, (liveDaySec / simulatedDaySeconds) * 100)}%` }}/></div>
