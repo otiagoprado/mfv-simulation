@@ -1599,7 +1599,7 @@ function ElementPopover({ el, processes, assumptions, onUpdate, onDelete, onClos
               </div>
             ) : (
               <div className="popover-input-wrap">
-                <input type="number" min={0} value={el.data[f.key] ?? 0}
+                <input type="number" min={0} value={el.data[f.key] ?? (f.key === 'pecasCiclo' ? 1 : 0)}
                   onChange={(e) => onUpdate({ data: { ...el.data, [f.key]: Number(e.target.value) } })} />
                 {f.suffix && <span>{f.suffix}</span>}
               </div>
