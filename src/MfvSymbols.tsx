@@ -331,14 +331,15 @@ export function PartySymbol({ el, selected, onEdit }: SymProps) {
  * A lateral do baú é um trapézio; o logo é fatiado em colunas e cada fatia recebe a transformação
  * afim do seu trecho do trapézio, o que reproduz o encolhimento em perspectiva.
  */
-function TrailerLogo({ href, id }: { href: string; id: string }) {
+function TrailerLogo({ href, id, fit }: { href: string; id: string; fit: 'ajustar' | 'preencher' }) {
   // Cantos da lateral do baú em coordenadas do símbolo (imagem 1681×935 desenhada em 206×108 a partir de 2,2).
   const sx = 206 / 1681; const sy = 108 / 935;
   const TL = { x: 2 + 22 * sx, y: 2 + 292 * sy }; const TR = { x: 2 + 688 * sx, y: 2 + 112 * sy };
   const BL = { x: 2 + 22 * sx, y: 2 + 640 * sy }; const BR = { x: 2 + 688 * sx, y: 2 + 622 * sy };
   // Região do logo dentro da lateral (fração da largura e da altura), afastada da cabine e do friso superior.
-  const U0 = 0.07; const U1 = 0.7; const V0 = 0.14; const V1 = 0.9;
-  const W = 100; const H = 60; const SLICES = 12;
+  // A lateral inteira (com uma pequena margem para o friso e as bordas).
+  const U0 = 0.025; const U1 = 0.975; const V0 = 0.06; const V1 = 0.95;
+  const W = 100; const H = 50; const SLICES = 16;
   const at = (u: number, v: number) => {
     const top = { x: TL.x + (TR.x - TL.x) * u, y: TL.y + (TR.y - TL.y) * u };
     const bottom = { x: BL.x + (BR.x - BL.x) * u, y: BL.y + (BR.y - BL.y) * u };
@@ -355,7 +356,7 @@ function TrailerLogo({ href, id }: { href: string; id: string }) {
       const clipId = `${id}-logo-slice-${index}`;
       return <g key={index} transform={`matrix(${a} ${b} ${c} ${d} ${p00.x} ${p00.y})`}>
         <clipPath id={clipId}><rect x={0} y={0} width={sliceW + 0.6} height={H} /></clipPath>
-        <image href={href} x={-W * f0} y={0} width={W} height={H} preserveAspectRatio="xMidYMid meet" clipPath={`url(#${clipId})`} />
+        <image href={href} x={-W * f0} y={0} width={W} height={H} preserveAspectRatio={fit === 'preencher' ? 'xMidYMid slice' : 'xMidYMid meet'} clipPath={`url(#)`} />
       </g>;
     })}
   </g>;
@@ -369,7 +370,7 @@ export function TruckSymbol({ el, selected, onEdit, companyImage }: SymProps) {
     <g>
       {selected && <SelectionRect w={w} h={h} />}
       <TintedAssetImage el={el} href={truckThreeQuarter} x={2} y={2} width={206} height={108} />
-      {logo && <TrailerLogo href={logo} id={el.id} />}
+      {logo && <TrailerLogo href={logo} id={el.id} fit={String(el.data.logoAjuste ?? 'ajustar') === 'preencher' ? 'preencher' : 'ajustar'} />}
       {el.label && <text x={w/2} y={120} textAnchor="middle" fontSize={8} fontFamily="Arial" fill="#34383e" fontWeight="700">{el.label}</text>}
       {el.data.freq && <text x={w/2} y={129} textAnchor="middle" fontSize={6.5} fontFamily="Arial" fill="#6b7178">a cada {el.data.freq} dia(s)</text>}
       <EditBtn onEdit={onEdit} x={w-2} y={5} />
