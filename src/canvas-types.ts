@@ -89,6 +89,8 @@ export interface CanvasArrow {
   x1: number; y1: number;
   x2: number; y2: number;
   label?: string;
+  /** Dobras: pontos intermediários entre a origem e o destino. */
+  points?: { x: number; y: number }[];
   startAnchor?: ArrowAnchor;
   endAnchor?: ArrowAnchor;
 }
