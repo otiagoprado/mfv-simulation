@@ -460,6 +460,8 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
           members.push(next);
           next += 1;
         }
+        // Ciclo incompleto (as demais peças ainda não foram liberadas) fica esperando na entrada.
+        if (members.length < station.piecesPerCycle) break;
         const ready = Math.max(...members.map((unit) => stationArrival[unit]));
         const setup = station.batchMode && members.some((unit) => unit % station.batchSize === 0) ? station.setupSec : 0;
         const start = Math.max(ready, freeAt);
