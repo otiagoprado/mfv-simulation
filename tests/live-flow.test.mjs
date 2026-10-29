@@ -124,7 +124,7 @@ test('ordem de produção: todo o insumo entra de uma vez e o relatório dá a p
     return calculateLiveFlow(calculateCanvasSimulation(canvas), assumptions, elapsedSec, { orderQuantity });
   };
   // Masseira de 5 por ciclo (60 s) e um processo de 60 s/peça em lote de 5: ordem de 7 unidades.
-  const early = order([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60, { lote: 5 })], 30, 7);
+  const early = order([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60, { lote: 5 })], 90, 7);
   assert.equal(early.launched, 7);
   assert.equal(early.stations[0].processing, 5);
   assert.equal(early.stations[0].waiting, 2);
