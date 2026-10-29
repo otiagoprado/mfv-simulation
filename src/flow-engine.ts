@@ -400,8 +400,15 @@ interface LiveStation {
  * em ordem (fila única por processo) e respeita a fabricação por lotes. Devolve onde cada peça
  * está em `elapsedSec` e os totais exibidos no painel da simulação.
  */
-export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasSimulation>, assumptions: ScenarioAssumptions, elapsedSec: number) {
+export interface LiveFlowOptions {
+  /** Quantidade de uma ordem de produção: todo o insumo fica disponível no início e a simulação mede o tempo até concluir. */
+  orderQuantity?: number;
+}
+
+export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasSimulation>, assumptions: ScenarioAssumptions, elapsedSec: number, options: LiveFlowOptions = {}) {
   const availableSeconds = assumptions.availableMinutesPerDay * 60;
+  const orderQuantity = Math.max(0, Math.round(Number(options.orderQuantity) || 0));
+  const orderMode = orderQuantity > 0;
   const pacemakerInterval = simulation.pacemakerMetric?.capacityPerDay && Number.isFinite(simulation.pacemakerMetric.capacityPerDay)
     ? availableSeconds / simulation.pacemakerMetric.capacityPerDay
     : 0;
@@ -425,14 +432,25 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   let scheduledTime = 0;
   let batchIndex = 0;
   let unitsSoFar = 0;
-  while ((scheduledTime <= elapsedSec || unitsSoFar % firstCycle !== 0) && scheduledTime < availableSeconds * LIVE_MAX_DAYS && batchIndex < 5000) {
-    const product = sequence[batchIndex % sequence.length];
-    const interval = Math.max(product.pitchTimeSec, pacemakerInterval * product.packSize);
-    if (!Number.isFinite(interval) || interval <= 0) break;
-    demandedBatches.push({ batchIndex, product, packSize: product.packSize, releaseTime: scheduledTime, interval });
-    scheduledTime += interval;
-    batchIndex += 1;
-    unitsSoFar += product.packSize;
+  if (orderMode) {
+    // Ordem de produção: todo o insumo é colocado de uma vez, então todas as unidades ficam disponíveis no instante zero.
+    while (unitsSoFar < orderQuantity && batchIndex < 5000) {
+      const product = sequence[batchIndex % sequence.length];
+      const packSize = Math.min(product.packSize, orderQuantity - unitsSoFar);
+      demandedBatches.push({ batchIndex, product, packSize, releaseTime: 0, interval: 0 });
+      batchIndex += 1;
+      unitsSoFar += packSize;
+    }
+  } else {
+    while ((scheduledTime <= elapsedSec || unitsSoFar % firstCycle !== 0) && scheduledTime < availableSeconds * LIVE_MAX_DAYS && batchIndex < 5000) {
+      const product = sequence[batchIndex % sequence.length];
+      const interval = Math.max(product.pitchTimeSec, pacemakerInterval * product.packSize);
+      if (!Number.isFinite(interval) || interval <= 0) break;
+      demandedBatches.push({ batchIndex, product, packSize: product.packSize, releaseTime: scheduledTime, interval });
+      scheduledTime += interval;
+      batchIndex += 1;
+      unitsSoFar += product.packSize;
+    }
   }
   const demandedPacks = demandedBatches.length;
   const demanded = demandedBatches.reduce((sum, batch) => sum + batch.packSize, 0);
@@ -440,6 +458,8 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   const shippingLot = simulation.shippingLot;
   const units = demandedBatches.flatMap((batch) => Array.from({ length: batch.packSize }, () => batch));
   const scheduled = units.map((batch, unit) => firstCycle > 1 ? units[Math.floor(unit / firstCycle) * firstCycle].releaseTime : batch.releaseTime);
+  // Na ordem de produção o último ciclo, o último lote e o último lote de expedição seguem mesmo incompletos.
+  const closesPartialGroups = orderMode;
   const wipLimit = simulation.pullSystemActive ? Math.max(1, simulation.pullWipLimit) : Infinity;
 
   // Linha do tempo de cada peça em cada processo: chegada, início, fim da produção e saída.
@@ -466,7 +486,7 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
           next += 1;
         }
         // Ciclo incompleto (as demais peças ainda não foram liberadas) fica esperando na entrada.
-        if (members.length < station.piecesPerCycle) break;
+        if (members.length < station.piecesPerCycle && !(closesPartialGroups && next === units.length)) break;
         const ready = Math.max(...members.map((unit) => stationArrival[unit]));
         const setup = station.batchMode && members.some((unit) => unit % station.batchSize === 0) ? station.setupSec : 0;
         const start = Math.max(ready, freeAt);
@@ -484,7 +504,8 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
         // e fica no buffer de saída até o lote completar. O lote inteiro segue junto quando a última fica pronta.
         for (let first = 0; first < units.length; first += station.batchSize) {
           const members = Array.from({ length: Math.min(station.batchSize, units.length - first) }, (_, offset) => first + offset);
-          const complete = members.length === station.batchSize && members.every((unit) => Number.isFinite(stationFinish[unit]));
+          const lastGroup = first + members.length === units.length;
+          const complete = (members.length === station.batchSize || (closesPartialGroups && lastGroup)) && members.every((unit) => Number.isFinite(stationFinish[unit]));
           const groupReady = complete ? Math.max(...members.map((unit) => stationFinish[unit])) : Infinity;
           members.forEach((unit) => { stationDepart[unit] = groupReady; });
         }
@@ -500,7 +521,8 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     const exit = shippingArrival.map((_, unit) => {
       const first = Math.floor(unit / shippingLot) * shippingLot;
       const members = shippingArrival.slice(first, first + shippingLot);
-      return members.length === shippingLot ? Math.max(...members) : Infinity;
+      const lastGroup = first + members.length === shippingArrival.length;
+      return members.length === shippingLot || (closesPartialGroups && lastGroup) ? Math.max(...members) : Infinity;
     });
     return { arrival, start, finish, depart, shippingArrival, exit };
   };
@@ -550,7 +572,16 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
 
   const launched = launchedUnits.length;
   const completionInterval = simulation.bottleneckCapacity > 0 ? availableSeconds / simulation.bottleneckCapacity : Infinity;
+  // Relatório da ordem: quando a primeira e a última unidade ficam prontas (tempo de fluxo, sem contar o dia).
+  const exits = timeline.exit.filter(Number.isFinite);
+  const order = orderMode ? {
+    quantity: orderQuantity,
+    firstDoneSec: exits.length ? Math.min(...exits) : null,
+    lastDoneSec: exits.length === units.length && units.length > 0 ? Math.max(...exits) : null,
+    done: units.length > 0 && timeline.exit.every((time) => time <= elapsedSec),
+  } : null;
   return {
+    order,
     releaseInterval: demandedBatches[demandedBatches.length - 1]?.interval ?? Math.max(simulation.pitchTimeSec, pacemakerInterval * packSize),
     packSize,
     demandedPacks,

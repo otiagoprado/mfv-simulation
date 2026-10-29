@@ -42,6 +42,7 @@ const PREVIOUS_STORAGE_KEY = 'mfv-canvas:v4';
 const OLDER_STORAGE_KEY = 'mfv-canvas:v3';
 const OLDEST_STORAGE_KEY = 'mfv-canvas:v2';
 const LEGACY_STORAGE_KEY = 'mfv-simulation:v2';
+const LIVE_ORDER_STORAGE_KEY = 'mfv-live-order:v1';
 const MANUAL_SEEN_KEY = 'mfv-manual-seen:v1';
 const FIXED_PLANNING_ID = '__mfv-demand-planning__';
 const FIXED_IDENTIFICATION_ID = '__mfv-identification__';
@@ -1273,10 +1274,11 @@ function bottleneckGuidance(metric: ReturnType<typeof calculateCanvasSimulation>
   };
 }
 
-function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
+function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: {
   canvas: CanvasState;
   simulation: ReturnType<typeof calculateCanvasSimulation>;
   elapsedSec: number;
+  orderQuantity?: number;
 }) {
   if (elapsedSec <= 0 || simulation.processElements.length === 0 || !Number.isFinite(simulation.taktTimeSec) || !simulation.routeReady) return null;
   const stageElements = simulation.productionRouteElements;
@@ -1289,7 +1291,7 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec }: {
     return { id: element.id, x: element.x + size.width * 0.42, y: element.y + size.height * 0.43, element, size };
   });
   const route = centers;
-  const liveFlow = calculateLiveFlow(simulation, canvas.assumptions, elapsedSec);
+  const liveFlow = calculateLiveFlow(simulation, canvas.assumptions, elapsedSec, { orderQuantity });
   const stationBoxes = simulation.processMetrics.map((metric) => {
     const size = elementDimensions(metric.element);
     const bottom = metric.element.y + size.height;
@@ -2377,6 +2379,14 @@ export default function App() {
   const [liveRunning, setLiveRunning] = useState(false);
   const [liveElapsedSec, setLiveElapsedSec] = useState(0);
   const [liveSpeed, setLiveSpeed] = useState(300);
+  // Quantidade da ordem de produção simulada; vazio = fluxo contínuo no ritmo da demanda.
+  const [liveOrderInput, setLiveOrderInput] = useState(() => {
+    try { return localStorage.getItem(LIVE_ORDER_STORAGE_KEY) ?? ''; } catch { return ''; }
+  });
+  const liveOrderQuantity = Math.max(0, Math.round(Number(liveOrderInput) || 0));
+  useEffect(() => {
+    try { localStorage.setItem(LIVE_ORDER_STORAGE_KEY, liveOrderInput); } catch { /* armazenamento indisponível */ }
+  }, [liveOrderInput]);
   const [clipboardNotice, setClipboardNotice] = useState('');
   const svgRef = useRef<SVGSVGElement>(null);
   const leanFloatingRef = useRef<HTMLDivElement>(null);
@@ -2436,6 +2446,11 @@ export default function App() {
   useEffect(() => {
     if (liveElapsedSec >= simulatedDaySeconds * LIVE_MAX_DAYS && liveRunning) setLiveRunning(false);
   }, [liveElapsedSec, liveRunning, simulatedDaySeconds]);
+  // Quando a ordem de produção fica pronta, a simulação para e o relógio fica no tempo total.
+  useEffect(() => {
+    setLiveRunning(false);
+    setLiveElapsedSec(0);
+  }, [liveOrderQuantity]);
 
   const openElementEditor = (element: CanvasElement) => {
     if (element.id === FIXED_PLANNING_ID) {
@@ -2975,10 +2990,26 @@ export default function App() {
     });
   };
 
-  const liveFlow = calculateLiveFlow(simulation, canvas.assumptions, liveElapsedSec);
+  const liveFlow = calculateLiveFlow(simulation, canvas.assumptions, liveElapsedSec, { orderQuantity: liveOrderQuantity });
   const liveLaunched = liveFlow.launched;
   const liveCompleted = liveFlow.completed;
   const liveWip = liveFlow.wip;
+  const liveOrder = liveFlow.order;
+  useEffect(() => {
+    if (liveOrder?.done && liveRunning) {
+      setLiveRunning(false);
+      if (liveOrder.lastDoneSec !== null) setLiveElapsedSec(liveOrder.lastDoneSec);
+    }
+  }, [liveOrder?.done, liveOrder?.lastDoneSec, liveRunning]);
+  // Tempo de trabalho decorrido: "2 h 05 min", ou com os dias úteis quando passa de um dia.
+  const formatWorkTime = (seconds: number) => {
+    const days = Math.floor(seconds / simulatedDaySeconds);
+    const rest = seconds - days * simulatedDaySeconds;
+    const hours = Math.floor(rest / 3600);
+    const minutes = Math.floor((rest % 3600) / 60);
+    const clock = hours > 0 ? `${hours} h ${String(minutes).padStart(2, '0')} min` : `${minutes} min`;
+    return days > 0 ? `${days} dia${days > 1 ? 's' : ''} + ${clock}` : clock;
+  };
   const nextLeveledSlot = liveFlow.blocked > 0
     ? liveFlow.demandedBatches[liveFlow.launchedBatches.length]?.product
     : simulation.leveledSequence[liveFlow.demandedPacks % Math.max(1, simulation.leveledSequence.length)];
@@ -3131,6 +3162,10 @@ export default function App() {
             {activeKind === 'future' && <button className="future-sync-status" onClick={() => setComparisonOpen(true)} title="Comparar todos os cenários com o Estado atual">
               <BarChart3 size={15}/><span>Comparar</span>
             </button>}
+            <label className="live-order-field header" title="Quantidade da ordem de produção a simular. Vazio: fluxo contínuo no ritmo da demanda."><span>Ordem</span>
+              <input type="number" min={0} step={1} placeholder="contínuo" value={liveOrderInput} onChange={(event) => setLiveOrderInput(event.target.value)} aria-label="Quantidade da ordem de produção" />
+              <small>un</small>
+            </label>
             <button className={`live-launch-button ${liveRunning ? 'running' : ''}`} onClick={toggleLiveSimulation} title="Executar o fluxo produtivo no canvas">
               {liveRunning ? <Pause size={16}/> : <Activity size={16}/>}<span>{liveRunning ? 'Pausar' : liveElapsedSec > 0 ? 'Continuar' : 'Simular fluxo'}</span>
             </button>
@@ -3153,15 +3188,25 @@ export default function App() {
             <label><span>Velocidade</span><SiteSelect className="dark" value={String(liveSpeed)} onChange={(value) => setLiveSpeed(Number(value))} ariaLabel="Velocidade da simulação" options={[
               { value: '60', label: '1 min/s' }, { value: '300', label: '5 min/s' }, { value: '1200', label: '20 min/s' },
             ]}/></label>
+            <label className="live-order-field" title="Quantidade da ordem de produção. Vazio: fluxo contínuo no ritmo da demanda."><span>Ordem</span>
+              <input type="number" min={0} step={1} placeholder="contínuo" value={liveOrderInput} onChange={(event) => setLiveOrderInput(event.target.value)} aria-label="Quantidade da ordem de produção" />
+              <small>un</small>
+            </label>
           </div>
           <div className="live-metrics">
             <div><span>Tempo simulado</span><strong>{liveClock}</strong></div>
-            <div className={liveFlow.blocked > 0 ? 'attention' : ''}><span>{liveFlow.blocked > 0 ? 'Embalagem aguardando' : 'Próxima embalagem'}</span><strong style={{ color: nextLeveledSlot?.color }}>{nextLeveledSlot ? `${nextLeveledSlot.code} · ${nextLeveledSlot.packSize} un` : '—'}</strong></div>
-            <div><span>Ordens liberadas</span><strong>{liveLaunched}</strong></div>
-            <div className={liveFlow.blocked > 0 ? 'attention' : ''}><span>Bloqueadas pelo pull</span><strong>{liveFlow.blocked}</strong></div>
-            <div><span>Caixas concluídas</span><strong>{liveCompleted}</strong></div>
-            <div className={liveWip > 0 ? 'attention' : ''}><span>WIP em fluxo</span><strong>{liveWip}</strong></div>
-            <div className={simulation.overloadedProcesses.length ? 'critical' : 'healthy'}><span>Situação</span><strong>{simulation.overloadedProcesses.length ? `${simulation.overloadedProcesses.length} quebra(m)` : 'Fluxo atende'}</strong></div>
+            {liveOrder
+              ? <div><span>Ordem de produção</span><strong>{liveOrder.quantity} un</strong></div>
+              : <div className={liveFlow.blocked > 0 ? 'attention' : ''}><span>{liveFlow.blocked > 0 ? 'Unidade aguardando' : 'Próxima unidade'}</span><strong style={{ color: nextLeveledSlot?.color }}>{nextLeveledSlot ? `${nextLeveledSlot.code} · ${nextLeveledSlot.packSize} un` : '—'}</strong></div>}
+            <div><span>Unidades liberadas</span><strong>{liveLaunched}</strong></div>
+            {!liveOrder && <div className={liveFlow.blocked > 0 ? 'attention' : ''}><span>Bloqueadas pelo pull</span><strong>{liveFlow.blocked}</strong></div>}
+            <div><span>Unidades concluídas</span><strong>{liveCompleted}</strong></div>
+            <div className={liveWip > 0 ? 'attention' : ''}><span>Unidades em processo</span><strong>{liveWip}</strong></div>
+            {liveOrder ? <>
+              <div className={liveOrder.firstDoneSec !== null && liveOrder.firstDoneSec <= liveElapsedSec ? 'healthy' : ''}><span>1ª unidade pronta</span><strong>{liveOrder.firstDoneSec !== null && liveOrder.firstDoneSec <= liveElapsedSec ? formatWorkTime(liveOrder.firstDoneSec) : '—'}</strong></div>
+              <div className={liveOrder.done ? 'healthy' : ''}><span>Última unidade</span><strong>{liveOrder.done && liveOrder.lastDoneSec !== null ? formatWorkTime(liveOrder.lastDoneSec) : '—'}</strong></div>
+              <div className={liveOrder.done ? 'healthy' : ''}><span>Tempo total da ordem</span><strong>{liveOrder.done && liveOrder.lastDoneSec !== null ? formatWorkTime(liveOrder.lastDoneSec) : 'em andamento'}</strong></div>
+            </> : <div className={simulation.overloadedProcesses.length ? 'critical' : 'healthy'}><span>Situação</span><strong>{simulation.overloadedProcesses.length ? `${simulation.overloadedProcesses.length} quebra(m)` : 'Fluxo atende'}</strong></div>}
           </div>
           <div className="live-day-progress" title={`Dia ${liveDay} de ${LIVE_MAX_DAYS}`}><i style={{ width: `${Math.min(100, (liveDaySec / simulatedDaySeconds) * 100)}%` }}/></div>
         </div>}
@@ -3305,7 +3350,7 @@ export default function App() {
                 </g>
               ))}
             </g>
-            <LiveFlowOverlay canvas={canvas} simulation={simulation} elapsedSec={liveElapsedSec} />
+            <LiveFlowOverlay canvas={canvas} simulation={simulation} elapsedSec={liveElapsedSec} orderQuantity={liveOrderQuantity} />
             {automaticTimelinePosition && (
               <g transform={`translate(${automaticTimelinePosition.x},${automaticTimelinePosition.y})`}>
                 <TimelineSymbol
@@ -3403,6 +3448,7 @@ function ManualModal({ onClose }: { onClose: () => void }) {
       title: 'Edite e organize os elementos', icon: <Pencil size={18}/>, summary: 'Cada símbolo possui dados próprios, posição, tamanho e regras visuais.',
       bullets: [
         'Dê duplo clique em uma caixa para editar nome, tempos, quantidade, disponibilidade, qualidade e dimensões.',
+        'Na simulação ao vivo, informe a quantidade da Ordem de produção para simular uma ordem: todo o insumo entra de uma vez e o painel mostra quando a primeira e a última unidade ficam prontas e o tempo total. Vazio, a simulação segue o ritmo da demanda.',
         'Nos processos, Peças por ciclo indica quantas peças um ciclo produz de uma vez (ex.: masseira que faz massa para 5 pães em 60 s): a capacidade usa o tempo por peça e a simulação processa o grupo junto. O campo Lote de produção define o fluxo: 1 é peça a peça; maior que 1 é fabricação por lotes: a peça entra em produção assim que chega, mas o lote só segue ao próximo processo quando todas as suas peças ficam prontas.',
         'Arraste o elemento para mover. Nas setas, arraste o corpo para mover e as pontas para redimensionar ou conectar.',
         'Selecione um elemento e use Delete para excluir. A caixa de Controle da Produção é fixa e não pode ser removida.',

@@ -117,3 +117,29 @@ test('peças por ciclo em um processo intermediário: o ciclo espera encher com 
   assert.equal(flow.stations[1].waiting, 4);
   assert.equal(flow.stations[1].processing, 0);
 });
+
+test('ordem de produção: todo o insumo entra de uma vez e o relatório dá a primeira e a última unidade', () => {
+  const order = (elements, elapsedSec, orderQuantity) => {
+    const canvas = { elements, arrows: [], assumptions, themeColor: '#0071e3' };
+    return calculateLiveFlow(calculateCanvasSimulation(canvas), assumptions, elapsedSec, { orderQuantity });
+  };
+  // Masseira de 5 por ciclo (60 s) e um processo de 60 s/peça em lote de 5: ordem de 7 unidades.
+  const early = order([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60, { lote: 5 })], 30, 7);
+  assert.equal(early.launched, 7);
+  assert.equal(early.stations[0].processing, 5);
+  assert.equal(early.stations[0].waiting, 2);
+  assert.equal(early.order.quantity, 7);
+  // 1ª unidade: ciclo 60-120, trânsito 180, lote de 5 em b 180-480, trânsito final 540.
+  assert.equal(early.order.firstDoneSec, 540);
+  // Últimas 2: ciclo parcial 120-180, chegam em b 240, produzidas 480-600, lote parcial fecha em 600, saída 660.
+  assert.equal(early.order.lastDoneSec, 660);
+  assert.equal(early.order.done, false);
+  const finished = order([process('a', 0, 60, { pecasCiclo: 5 }), process('b', 300, 60, { lote: 5 })], 700, 7);
+  assert.equal(finished.completed, 7);
+  assert.equal(finished.order.done, true);
+});
+
+test('sem ordem de produção o relatório não existe e o fluxo segue a demanda', () => {
+  const flow = live([process('a', 0, 60)], 600);
+  assert.equal(flow.order, null);
+});
