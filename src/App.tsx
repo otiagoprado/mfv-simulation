@@ -851,7 +851,7 @@ const FIELD_DEFS: Partial<Record<ElementKind, { key: string; label: string; type
   'work-cell':          [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'op', label: 'Operadores', suffix: 'pess.' }],
   supplier:             [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor do fornecedor', type: 'color' },{ key: 'freq', label: 'Frequência entrega', suffix: 'dias' }],
   customer:             [{ key: 'label', label: 'Nome', type: 'text' },{ key: 'color', label: 'Cor do cliente', type: 'color' },{ key: 'freq', label: 'Frequência expedição', suffix: 'dias' }],
-  truck:                [{ key: 'label', label: 'Rótulo', type: 'text' },{ key: 'color', label: 'Cor do caminhão', type: 'color' },{ key: 'freq', label: 'Frequência', suffix: 'dias' }],
+  truck:                [{ key: 'label', label: 'Rótulo', type: 'text' },{ key: 'color', label: 'Cor do caminhão', type: 'color' },{ key: 'logoFonte', label: 'Logo no baú', type: 'select', options: [{ value: 'nenhum', label: 'Sem logo' }, { value: 'empresa', label: 'Logo da empresa (Identificação do MFV)' }, { value: 'proprio', label: 'Enviar imagem própria' }] },{ key: 'freq', label: 'Frequência', suffix: 'dias' }],
   'shipping-point':     [{ key: 'label', label: 'Rótulo', type: 'text' },{ key: 'color', label: 'Cor da expedição', type: 'color' },{ key: 'lote', label: 'Lote de expedição', suffix: 'un' }],
   inventory:            [{ key: 'qty', label: 'Quantidade', suffix: 'un' }],
   'safety-stock':       [{ key: 'qty', label: 'Quantidade', suffix: 'un' }],
@@ -896,7 +896,7 @@ const FIELD_DEFS: Partial<Record<ElementKind, { key: string; label: string; type
 
 // ─── Render de elemento ───────────────────────────────────────────────────────
 
-function renderElement(el: CanvasElement, selected: boolean, onEdit: () => void, simulation: ReturnType<typeof calculateCanvasSimulation>, availableMinutesPerDay: number, accentColor = DEFAULT_THEME_COLOR) {
+function renderElement(el: CanvasElement, selected: boolean, onEdit: () => void, simulation: ReturnType<typeof calculateCanvasSimulation>, availableMinutesPerDay: number, accentColor = DEFAULT_THEME_COLOR, companyImage = '') {
   const processMetric = simulation.processMetrics.find((metric) => metric.element.id === el.id);
   const p = {
     el,
@@ -908,6 +908,7 @@ function renderElement(el: CanvasElement, selected: boolean, onEdit: () => void,
     leadTimeDays: simulation.leadTimeDays,
     processingTimeMin: simulation.processingTimeMin,
     accentColor,
+    companyImage,
     processLoadPercent: processMetric?.loadPercent,
     processCapacityPerDay: processMetric?.capacityPerDay,
     heijunkaSchedule: simulation.leveledSequence,
@@ -1107,9 +1108,71 @@ function LibraryPanel({ onDragStart, accentColor }: { onDragStart: (item: Librar
 
 // ─── Setas SVG ────────────────────────────────────────────────────────────────
 
+/** Dobras válidas da seta (pontos intermediários com coordenadas finitas). */
+function arrowBends(arrow: CanvasArrow) {
+  return (arrow.points ?? []).filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+}
+
+/** Vértices da seta na ordem: origem, dobras, destino. */
+function arrowVertices(arrow: CanvasArrow) {
+  return [{ x: arrow.x1, y: arrow.y1 }, ...arrowBends(arrow), { x: arrow.x2, y: arrow.y2 }];
+}
+
+const polylinePath = (points: { x: number; y: number }[]) => points.map((point, index) => `${index ? 'L' : 'M'}${point.x},${point.y}`).join(' ');
+
+/** Seta com dobras: todos os tipos viram uma linha quebrada que mantém traço, tracejado e ponta. */
+function BentArrowShape({ arrow, selected }: { arrow: CanvasArrow; selected: boolean }) {
+  const vertices = arrowVertices(arrow);
+  const last = vertices[vertices.length - 1];
+  const previous = vertices[vertices.length - 2];
+  const segment = Math.hypot(last.x - previous.x, last.y - previous.y) || 1;
+  const ux = (last.x - previous.x) / segment; const uy = (last.y - previous.y) / segment;
+  const ex = last.x - ux * 10; const ey = last.y - uy * 10;
+  const shaft = [...vertices.slice(0, -1), { x: ex, y: ey }];
+  const color = '#111111';
+  const id = arrow.id;
+  const sw = selected ? 3 : 2;
+  const kind = arrow.kind;
+  const isPush = kind === 'arrow-push';
+  const isPhysical = kind === 'arrow-physical';
+  const dashed = kind === 'arrow-info-electronic' || kind === 'arrow-info-electronic-straight' ? '5 3'
+    : kind === 'arrow-adjustment' ? '3 3' : kind === 'arrow-shipment' ? '9 6' : kind === 'line-dashed' ? '8 6' : undefined;
+  const noHead = kind === 'line-straight' || kind === 'line-dashed';
+  const doubleHead = kind === 'arrow-double';
+  const lightning = kind === 'arrow-info-electronic' || kind === 'arrow-info-electronic-straight';
+  const mid = pointAlongRoute(vertices, 0.5);
+  return <g pointerEvents="none">
+    <defs>
+      <marker id={`m-${id}`} markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto-start-reverse">
+        <polygon points="0,0 9,3.5 0,7" fill={color} />
+      </marker>
+      <marker id={`mb-${id}`} markerUnits="userSpaceOnUse" markerWidth="18" markerHeight="16" refX="16" refY="8" orient="auto">
+        <polygon points="0,0 18,8 0,16" fill={isPhysical ? 'white' : color} stroke={color} strokeWidth={1.4} strokeLinejoin="round" />
+      </marker>
+      <pattern id={`zebra-${id}`} width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(24)">
+        <rect width="10" height="10" fill="white" />
+        <rect width="5" height="10" fill={color} />
+      </pattern>
+    </defs>
+    {isPush ? <>
+      <path d={polylinePath(shaft)} fill="none" stroke={color} strokeWidth={selected ? 9.5 : 8.5} strokeLinejoin="round" />
+      <path d={polylinePath(shaft)} fill="none" stroke={`url(#zebra-${id})`} strokeWidth={6} strokeLinejoin="round" markerEnd={`url(#mb-${id})`} />
+    </> : isPhysical ? <>
+      <path d={polylinePath(shaft)} fill="none" stroke={color} strokeWidth={selected ? 19 : 18} strokeLinejoin="round" />
+      <path d={polylinePath(shaft)} fill="none" stroke="white" strokeWidth={14} strokeLinejoin="round" markerEnd={`url(#mb-${id})`} />
+    </> : <path d={polylinePath(noHead ? vertices : shaft)} fill="none" stroke={color} strokeWidth={kind === 'arrow-info-manual-straight' ? (selected ? 2.6 : 1.6) : sw}
+      strokeDasharray={dashed} strokeLinejoin="round"
+      markerEnd={noHead ? undefined : `url(#m-${id})`} markerStart={doubleHead ? `url(#m-${id})` : undefined} />}
+    {(kind === 'arrow-pull' || kind === 'arrow-adjustment') && <circle cx={arrow.x1} cy={arrow.y1} r={4} fill={color} />}
+    {lightning && <polygon points={`${mid.x-4},${mid.y-11} ${mid.x-7},${mid.y-1} ${mid.x-2},${mid.y-1} ${mid.x-6},${mid.y+7} ${mid.x+4},${mid.y-5} ${mid.x-1},${mid.y-5}`} fill={color} opacity={0.85} />}
+    {arrow.label && <text x={mid.x} y={mid.y-12} textAnchor="middle" fontSize={8} fontFamily="Arial" fill="#444">{arrow.label}</text>}
+  </g>;
+}
+
 function ArrowShape({ arrow, selected }: {
   arrow: CanvasArrow; selected: boolean;
 }) {
+  if (arrowBends(arrow).length) return <BentArrowShape arrow={arrow} selected={selected} />;
   const dx = arrow.x2 - arrow.x1; const dy = arrow.y2 - arrow.y1;
   const len = Math.sqrt(dx*dx + dy*dy);
   const mx = (arrow.x1+arrow.x2)/2; const my = (arrow.y1+arrow.y2)/2;
@@ -1207,7 +1270,9 @@ function ArrowInteractionShape({ arrow, onMouseDown, onClick, onDoubleClick }: {
   const dy = arrow.y2 - arrow.y1;
   const mx = (arrow.x1 + arrow.x2) / 2;
   const my = (arrow.y1 + arrow.y2) / 2;
-  const path = arrow.kind === 'arrow-pull'
+  const path = arrowBends(arrow).length
+    ? polylinePath(arrowVertices(arrow))
+    : arrow.kind === 'arrow-pull'
     ? `M${arrow.x1},${arrow.y1} Q${mx-dy*.25},${my+dx*.25} ${arrow.x2},${arrow.y2}`
     : arrow.kind === 'arrow-schedule'
       ? `M${arrow.x1},${arrow.y1} Q${mx},${Math.min(arrow.y1, arrow.y2)-90} ${arrow.x2},${arrow.y2}`
@@ -1614,6 +1679,28 @@ function ElementPopover({ el, processes, assumptions, onUpdate, onDelete, onClos
             )}
           </div>
         ))}
+        {el.kind === 'truck' && String(el.data.logoFonte ?? 'nenhum') === 'proprio' && <div className="popover-field" style={{ marginTop: 8 }}>
+          <label>Imagem do logo</label>
+          <div className="popover-inline-actions">
+            <label className="popover-upload">
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (!file) return;
+                try {
+                  const logo = await prepareIdentificationImage(file);
+                  onUpdate({ data: { ...el.data, logo } });
+                } catch (error) {
+                  alert(error instanceof Error ? error.message : 'Não foi possível carregar a imagem.');
+                }
+              }} />
+              <span>{el.data.logo ? 'Trocar imagem' : 'Escolher imagem'}</span>
+            </label>
+            {el.data.logo && <button type="button" onClick={() => onUpdate({ data: { ...el.data, logo: '' } })}>Remover</button>}
+          </div>
+          {el.data.logo && <img src={String(el.data.logo)} alt="Logo do caminhão" className="popover-logo-preview" />}
+          <small className="popover-field-help">O logo é aplicado na lateral do baú acompanhando a perspectiva do caminhão. Use PNG com fundo transparente para melhor resultado.</small>
+        </div>}
         {isProcessKind && <div className="batch-editor">
           <small className="popover-field-help">{batch.mode === 'lote'
             ? `Produção em lotes: cada peça entra em produção assim que chega, fica no buffer de saída e o lote de ${batch.batchSize} peças só segue ao próximo processo quando a última fica pronta. Lote 1 volta ao fluxo contínuo.`
@@ -1908,6 +1995,26 @@ function ArrowPopover({ arrow, onUpdate, onDelete, onClose }: {
           <label>Rótulo</label>
           <input value={arrow.label ?? ''} onChange={(e) => onUpdate({ label: e.target.value })} />
         </div>
+        <div className="popover-field" style={{ marginTop: 8 }}>
+          <label>Dobras</label>
+          <div className="popover-inline-actions">
+            <button type="button" onClick={() => {
+              const vertices = arrowVertices(arrow);
+              // Nova dobra no meio do segmento mais longo.
+              let longest = 0; let best = 0;
+              vertices.slice(1).forEach((vertex, index) => {
+                const from = vertices[index];
+                const length = Math.hypot(vertex.x - from.x, vertex.y - from.y);
+                if (length > longest) { longest = length; best = index; }
+              });
+              const from = vertices[best]; const to = vertices[best + 1];
+              const bends = arrowBends(arrow);
+              onUpdate({ points: [...bends.slice(0, best), { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }, ...bends.slice(best)] });
+            }}>Adicionar dobra</button>
+            <button type="button" disabled={!arrowBends(arrow).length} onClick={() => onUpdate({ points: [] })}>Remover dobras</button>
+          </div>
+          <small className="popover-field-help">Com a seta selecionada, arraste o círculo tracejado no meio de um trecho para dobrar; duplo clique em uma dobra a remove.</small>
+        </div>
       </div>
       <div className="popover-footer">
         <button className="popover-delete" onClick={onDelete}><Trash2 size={13} />Excluir seta</button>
@@ -1922,8 +2029,9 @@ function ArrowPopover({ arrow, onUpdate, onDelete, onClose }: {
 type Dragging =
   | { type: 'element'; id: string; startX: number; startY: number; origX: number; origY: number }
   | { type: 'element-resize'; id: string; corner: 'nw' | 'ne' | 'sw' | 'se'; startX: number; startY: number; origX: number; origY: number; origWidth: number; origHeight: number }
-  | { type: 'arrow'; id: string; startX: number; startY: number; x1: number; y1: number; x2: number; y2: number }
+  | { type: 'arrow'; id: string; startX: number; startY: number; x1: number; y1: number; x2: number; y2: number; points: { x: number; y: number }[] }
   | { type: 'arrow-point'; id: string; point: 'start' | 'end' }
+  | { type: 'arrow-bend'; id: string; index: number }
   | { type: 'pan'; startX: number; startY: number; origX: number; origY: number };
 
 type CanvasClipboard =
@@ -2635,8 +2743,36 @@ export default function App() {
     dragUndoSnapshotRef.current = cloneWorkspace(workspaceRef.current);
     setDragging({
       type: 'arrow', id: arrow.id, startX: e.clientX, startY: e.clientY,
-      x1: arrow.x1, y1: arrow.y1, x2: arrow.x2, y2: arrow.y2,
+      x1: arrow.x1, y1: arrow.y1, x2: arrow.x2, y2: arrow.y2, points: arrowBends(arrow).map((point) => ({ ...point })),
     });
+  };
+
+  // Dobras: arrastar um vértice existente ou criar um novo no meio de um segmento e já arrastá-lo.
+  const onBendMouseDown = (e: React.MouseEvent, arrow: CanvasArrow, index: number) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    setSelectedId(arrow.id);
+    dragMovedRef.current = false;
+    dragUndoSnapshotRef.current = cloneWorkspace(workspaceRef.current);
+    setDragging({ type: 'arrow-bend', id: arrow.id, index });
+  };
+  const onInsertBendMouseDown = (e: React.MouseEvent, arrow: CanvasArrow, segmentIndex: number, at: { x: number; y: number }) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    setSelectedId(arrow.id);
+    dragMovedRef.current = false;
+    dragUndoSnapshotRef.current = cloneWorkspace(workspaceRef.current);
+    setCanvas((p) => ({ ...p, arrows: p.arrows.map((candidate) => {
+      if (candidate.id !== arrow.id) return candidate;
+      const points = arrowBends(candidate);
+      return { ...candidate, points: [...points.slice(0, segmentIndex), { x: at.x, y: at.y }, ...points.slice(segmentIndex)] };
+    }) }), true);
+    setDragging({ type: 'arrow-bend', id: arrow.id, index: segmentIndex });
+  };
+  const removeBend = (arrowId: string, index: number) => {
+    setCanvas((p) => ({ ...p, arrows: p.arrows.map((candidate) => candidate.id === arrowId
+      ? { ...candidate, points: arrowBends(candidate).filter((_, position) => position !== index) }
+      : candidate) }));
   };
 
   useEffect(() => {
@@ -2685,9 +2821,18 @@ export default function App() {
           y1: dragging.y1 + dy,
           x2: dragging.x2 + dx,
           y2: dragging.y2 + dy,
+          points: dragging.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
           startAnchor: undefined,
           endAnchor: undefined,
         } : arrow) }), true);
+      } else if (dragging.type === 'arrow-bend') {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const { x, y } = toCanvas(e.clientX - rect.left, e.clientY - rect.top);
+        dragMovedRef.current = true;
+        setCanvas((p) => ({ ...p, arrows: p.arrows.map((a) => a.id === dragging.id
+          ? { ...a, points: arrowBends(a).map((point, index) => index === dragging.index ? { x, y } : point) }
+          : a) }), true);
       } else if (dragging.type === 'arrow-point') {
         const rect = svgRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -2783,7 +2928,7 @@ export default function App() {
         }
         const arrow = canvas.arrows.find((candidate) => candidate.id === selectedId);
         if (arrow) {
-          canvasClipboardRef.current = { type: 'arrow', arrow: { ...arrow, startAnchor: arrow.startAnchor ? { ...arrow.startAnchor } : undefined, endAnchor: arrow.endAnchor ? { ...arrow.endAnchor } : undefined } };
+          canvasClipboardRef.current = { type: 'arrow', arrow: { ...arrow, points: arrowBends(arrow).map((point) => ({ ...point })), startAnchor: arrow.startAnchor ? { ...arrow.startAnchor } : undefined, endAnchor: arrow.endAnchor ? { ...arrow.endAnchor } : undefined } };
           pasteCountRef.current = 0;
           setClipboardNotice('Seta copiada.');
           event.preventDefault();
@@ -3005,6 +3150,8 @@ export default function App() {
   const liveCompleted = liveFlow.completed;
   const liveWip = liveFlow.wip;
   const liveOrder = liveFlow.order;
+  // Logotipo da empresa (caixa de Identificação), disponível para o baú dos caminhões.
+  const companyLogo = String(canvas.elements.find((element) => element.kind === 'identification')?.data.companyImage ?? '');
   // Relatório abaixo do mapa: gerado quando a simulação pausa ou conclui e mantido até a próxima simulação.
   const liveReport = liveElapsedSec > 0 && simulation.processElements.length ? buildLiveReport(liveFlow, simulation, liveElapsedSec) : null;
   useEffect(() => {
@@ -3334,7 +3481,7 @@ export default function App() {
                   openElementEditor(el);
                 }}
                 onDoubleClick={(e) => { e.stopPropagation(); openElementEditor(el); }}>
-                {renderElement(el, selectedId===el.id, () => openElementEditor(el), simulation, canvas.assumptions.availableMinutesPerDay, canvas.themeColor)}
+                {renderElement(el, selectedId===el.id, () => openElementEditor(el), simulation, canvas.assumptions.availableMinutesPerDay, canvas.themeColor, companyLogo)}
               </g>
             ))}
             {canvas.elements.filter((element) => element.id === selectedId && element.kind === 'resource-zone').map((element) => {
@@ -3364,14 +3511,32 @@ export default function App() {
                     if (!dragMovedRef.current) setEditingArrow(arrow);
                   }} />
               ))}
-              {canvas.arrows.filter((arrow) => arrow.id===selectedId).map((arrow) => (
-                <g key={`h-${arrow.id}`}>
+              {canvas.arrows.filter((arrow) => arrow.id===selectedId).map((arrow) => {
+                const vertices = arrowVertices(arrow);
+                const bends = arrowBends(arrow);
+                return <g key={`h-${arrow.id}`}>
+                  {/* Meio de cada segmento: arraste para criar uma dobra. */}
+                  {vertices.slice(1).map((vertex, index) => {
+                    const from = vertices[index];
+                    const at = { x: (from.x + vertex.x) / 2, y: (from.y + vertex.y) / 2 };
+                    return <g key={`insert-${index}`} style={{ cursor: 'copy' }} onMouseDown={(event) => onInsertBendMouseDown(event, arrow, index, at)}>
+                      <title>Arraste para criar uma dobra</title>
+                      <circle cx={at.x} cy={at.y} r={6} fill="white" stroke="#0071e3" strokeWidth={1.4} strokeDasharray="2 2" opacity={0.9} />
+                      <path d={`M${at.x - 3},${at.y} H${at.x + 3} M${at.x},${at.y - 3} V${at.y + 3}`} stroke="#0071e3" strokeWidth={1.4} />
+                    </g>;
+                  })}
+                  {/* Dobras existentes: arraste para mover, duplo clique para remover. */}
+                  {bends.map((point, index) => <circle key={`bend-${index}`} cx={point.x} cy={point.y} r={7} fill="#0071e3" stroke="white" strokeWidth={2} style={{ cursor: 'move' }}
+                    onMouseDown={(event) => onBendMouseDown(event, arrow, index)}
+                    onDoubleClick={(event) => { event.stopPropagation(); removeBend(arrow.id, index); }}>
+                    <title>Dobra · arraste para mover · duplo clique para remover</title>
+                  </circle>)}
                   <circle cx={arrow.x1} cy={arrow.y1} r={8} fill="white" stroke="#0071e3" strokeWidth={2} style={{cursor:'crosshair'}}
                     onMouseDown={(event) => onHandleMouseDown(event, arrow.id, 'start')} />
                   <circle cx={arrow.x2} cy={arrow.y2} r={8} fill="white" stroke="#0071e3" strokeWidth={2} style={{cursor:'crosshair'}}
                     onMouseDown={(event) => onHandleMouseDown(event, arrow.id, 'end')} />
-                </g>
-              ))}
+                </g>;
+              })}
             </g>
             <LiveFlowOverlay canvas={canvas} simulation={simulation} elapsedSec={liveElapsedSec} orderQuantity={liveOrderQuantity} />
             {automaticTimelinePosition && (
@@ -3474,6 +3639,7 @@ function ManualModal({ onClose }: { onClose: () => void }) {
       bullets: [
         'Dê duplo clique em uma caixa para editar nome, tempos, quantidade, disponibilidade, qualidade e dimensões.',
         'Na simulação ao vivo, informe a quantidade da Ordem de produção para simular uma ordem: todo o insumo entra de uma vez e o painel mostra quando a primeira e a última unidade ficam prontas e o tempo total. Vazio, a simulação segue o ritmo da demanda.',
+        'Setas: com a seta selecionada, arraste o círculo tracejado no meio de um trecho para criar uma dobra; arraste a dobra para movê-la e dê duplo clique para removê-la. Caminhões: em Logo no baú, use o logo da empresa ou envie uma imagem; ela acompanha a perspectiva do baú.',
         'Ao pausar ou concluir a simulação, o Relatório da simulação aparece abaixo do mapa (tempo médio por unidade, gráficos e tabela por processo). Ele fica disponível pelo botão Relatório e sai junto com o mapa nas exportações em PDF e JPEG.',
         'Nos processos, Peças por ciclo indica quantas peças um ciclo produz de uma vez (ex.: masseira que faz massa para 5 pães em 60 s): a capacidade usa o tempo por peça e a simulação processa o grupo junto. O campo Lote de produção define o fluxo: 1 é peça a peça; maior que 1 é fabricação por lotes: a peça entra em produção assim que chega, mas o lote só segue ao próximo processo quando todas as suas peças ficam prontas.',
         'Arraste o elemento para mover. Nas setas, arraste o corpo para mover e as pontas para redimensionar ou conectar.',

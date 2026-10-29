@@ -23,6 +23,8 @@ interface SymProps {
   leadTimeDays?: number;
   processingTimeMin?: number;
   accentColor?: string;
+  /** Logotipo da empresa (Identificação do MFV), usado no baú do caminhão quando configurado. */
+  companyImage?: string;
   processLoadPercent?: number;
   processCapacityPerDay?: number;
   heijunkaSchedule?: {
@@ -324,12 +326,50 @@ export function PartySymbol({ el, selected, onEdit }: SymProps) {
 }
 
 // ── Caminhão ──────────────────────────────────────────────────────────────────
-export function TruckSymbol({ el, selected, onEdit }: SymProps) {
+/**
+ * Logotipo no baú do caminhão seguindo a perspectiva da imagem.
+ * A lateral do baú é um trapézio; o logo é fatiado em colunas e cada fatia recebe a transformação
+ * afim do seu trecho do trapézio, o que reproduz o encolhimento em perspectiva.
+ */
+function TrailerLogo({ href, id }: { href: string; id: string }) {
+  // Cantos da lateral do baú em coordenadas do símbolo (imagem 1681×935 desenhada em 206×108 a partir de 2,2).
+  const sx = 206 / 1681; const sy = 108 / 935;
+  const TL = { x: 2 + 22 * sx, y: 2 + 292 * sy }; const TR = { x: 2 + 688 * sx, y: 2 + 112 * sy };
+  const BL = { x: 2 + 22 * sx, y: 2 + 640 * sy }; const BR = { x: 2 + 688 * sx, y: 2 + 622 * sy };
+  // Região do logo dentro da lateral (fração da largura e da altura), afastada da cabine e do friso superior.
+  const U0 = 0.12; const U1 = 0.62; const V0 = 0.2; const V1 = 0.84;
+  const W = 100; const H = 60; const SLICES = 12;
+  const at = (u: number, v: number) => {
+    const top = { x: TL.x + (TR.x - TL.x) * u, y: TL.y + (TR.y - TL.y) * u };
+    const bottom = { x: BL.x + (BR.x - BL.x) * u, y: BL.y + (BR.y - BL.y) * u };
+    return { x: top.x + (bottom.x - top.x) * v, y: top.y + (bottom.y - top.y) * v };
+  };
+  return <g>
+    {Array.from({ length: SLICES }, (_, index) => {
+      const f0 = index / SLICES; const f1 = (index + 1) / SLICES;
+      const u0 = U0 + (U1 - U0) * f0; const u1 = U0 + (U1 - U0) * f1;
+      const p00 = at(u0, V0); const p10 = at(u1, V0); const p01 = at(u0, V1);
+      const sliceW = W * (f1 - f0);
+      const a = (p10.x - p00.x) / sliceW; const b = (p10.y - p00.y) / sliceW;
+      const c = (p01.x - p00.x) / H; const d = (p01.y - p00.y) / H;
+      const clipId = `${id}-logo-slice-${index}`;
+      return <g key={index} transform={`matrix(${a} ${b} ${c} ${d} ${p00.x} ${p00.y})`}>
+        <clipPath id={clipId}><rect x={0} y={0} width={sliceW + 0.6} height={H} /></clipPath>
+        <image href={href} x={-W * f0} y={0} width={W} height={H} preserveAspectRatio="xMidYMid meet" clipPath={`url(#${clipId})`} />
+      </g>;
+    })}
+  </g>;
+}
+
+export function TruckSymbol({ el, selected, onEdit, companyImage }: SymProps) {
   const w = 210; const h = 130;
+  const logoSource = String(el.data.logoFonte ?? 'nenhum');
+  const logo = logoSource === 'empresa' ? (companyImage ?? '') : logoSource === 'proprio' ? String(el.data.logo ?? '') : '';
   return (
     <g>
       {selected && <SelectionRect w={w} h={h} />}
       <TintedAssetImage el={el} href={truckThreeQuarter} x={2} y={2} width={206} height={108} />
+      {logo && <TrailerLogo href={logo} id={el.id} />}
       {el.label && <text x={w/2} y={120} textAnchor="middle" fontSize={8} fontFamily="Arial" fill="#34383e" fontWeight="700">{el.label}</text>}
       {el.data.freq && <text x={w/2} y={129} textAnchor="middle" fontSize={6.5} fontFamily="Arial" fill="#6b7178">a cada {el.data.freq} dia(s)</text>}
       <EditBtn onEdit={onEdit} x={w-2} y={5} />

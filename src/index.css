@@ -1020,3 +1020,8 @@ g:hover > .edit-btn-group { opacity: 1; }
 .live-report-actions { display: flex; gap: 6px; }
 .live-report-actions > button { width: 30px; height: 30px; display: grid; place-items: center; color: #3a3a3c; background: #f2f2f7; border: 0; border-radius: 50%; }
 .live-report-reopen { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; color: #0a84ff; background: rgba(10,132,255,.1); border: 1px solid rgba(10,132,255,.25); border-radius: 10px; font-size: 10px; font-weight: 700; }
+.popover-inline-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.popover-inline-actions button { height: 28px; padding: 0 10px; color: #0a84ff; background: rgba(10,132,255,.1); border: 1px solid rgba(10,132,255,.25); border-radius: 8px; font-size: 9.5px; font-weight: 700; }
+.popover-inline-actions button:disabled { opacity: .45; }
+.popover-upload { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; color: #0a84ff; background: rgba(10,132,255,.1); border: 1px solid rgba(10,132,255,.25); border-radius: 8px; font-size: 9.5px; font-weight: 700; cursor: pointer; }
+.popover-logo-preview { display: block; max-width: 120px; max-height: 60px; margin-top: 6px; padding: 4px; background: #fff; border: 1px solid #e5e5ea; border-radius: 8px; object-fit: contain; }
