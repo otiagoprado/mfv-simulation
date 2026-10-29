@@ -573,8 +573,10 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   const launched = launchedUnits.length;
   const completionInterval = simulation.bottleneckCapacity > 0 ? availableSeconds / simulation.bottleneckCapacity : Infinity;
   // Relatório da ordem: quando a primeira e a última unidade ficam prontas (tempo de fluxo, sem contar o dia).
-  // "Pronta" é a chegada à expedição; "entregue" inclui a espera pelo lote de expedição.
-  const ready = timeline.shippingArrival.filter(Number.isFinite);
+  // "Pronta" é a saída do último processo (fim da produção da peça), antes de esperar o lote e o
+  // trânsito até a expedição; "entregue" inclui a espera pelo lote de expedição.
+  const lastFinish = stations.length ? timeline.finish[stations.length - 1] : release;
+  const ready = lastFinish.filter(Number.isFinite);
   const exits = timeline.exit.filter(Number.isFinite);
   const order = orderMode ? {
     quantity: orderQuantity,

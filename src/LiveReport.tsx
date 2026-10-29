@@ -40,7 +40,7 @@ function StatTile({ label, value, detail, tone }: { label: string; value: string
 }
 
 /** Área acumulada: liberadas (cinza) e concluídas (azul) ao longo do tempo, com cursor e dica. */
-function CumulativeChart({ report, daySeconds }: { report: LiveReportData; daySeconds: number }) {
+export function CumulativeChart({ report, daySeconds }: { report: LiveReportData; daySeconds: number }) {
   const [hover, setHover] = useState<number | null>(null);
   const width = 640; const height = 220; const left = 40; const right = 16; const top = 14; const bottom = 28;
   const plotW = width - left - right; const plotH = height - top - bottom;
@@ -94,6 +94,52 @@ function CumulativeChart({ report, daySeconds }: { report: LiveReportData; daySe
           <text x={10} y={42} fontSize={9} fill="#d1d1d6">Concluídas · {formatNumber(hovered.completed)} un</text>
         </g>
       </g>}
+    </svg>
+  </div>;
+}
+
+/** Linha do tempo da primeira peça: quanto cada operação esperou parada até receber a primeira peça e quando a terminou. */
+function FirstPieceChart({ processes, daySeconds }: { processes: LiveReportProcess[]; daySeconds: number }) {
+  const [hover, setHover] = useState<string | null>(null);
+  const horizon = Math.max(1, ...processes.map((process) => process.firstFinishSec ?? process.firstArrivalSec ?? 0));
+  const rowH = 30; const labelW = 150; const width = 640; const right = 70; const plotW = width - labelW - right;
+  const height = processes.length * rowH + 26;
+  const x = (time: number) => labelW + (time / horizon) * plotW;
+  return <div className="report-chart">
+    <div className="report-chart-head">
+      <h4>Espera de cada operação até a primeira peça</h4>
+      <div className="report-legend">
+        <span><i style={{ background: COLORS.queue }} />Parada esperando a 1ª peça</span>
+        <span><i style={{ background: COLORS.processing }} />1ª peça em produção</span>
+      </div>
+    </div>
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMinYMin meet" role="img" aria-label="Espera de cada operação até receber a primeira peça">
+      {Array.from({ length: 5 }, (_, index) => {
+        const time = (horizon * index) / 4;
+        return <g key={index}>
+          <line x1={x(time)} x2={x(time)} y1={2} y2={height - 22} stroke="#e5e5ea" strokeWidth={1} />
+          <text x={x(time)} y={height - 8} textAnchor={index === 0 ? 'start' : index === 4 ? 'end' : 'middle'} fontSize={9} fill="#8e8e93">{formatWorkDuration(time, daySeconds)}</text>
+        </g>;
+      })}
+      {processes.map((process, index) => {
+        const yTop = index * rowH + 6;
+        const arrival = process.firstArrivalSec;
+        const finish = process.firstFinishSec;
+        return <g key={process.id} onMouseEnter={() => setHover(process.id)} onMouseLeave={() => setHover(null)}>
+          <rect x={0} y={yTop - 4} width={width} height={rowH} fill={hover === process.id ? '#f2f2f7' : 'transparent'} rx={8} />
+          <text x={labelW - 10} y={yTop + 14} textAnchor="end" fontSize={10} fontWeight={500} fill="#1c1c1e">
+            {process.label.length > 24 ? `${process.label.slice(0, 23)}…` : process.label}
+          </text>
+          {arrival !== null && arrival > 0 && <rect x={labelW} y={yTop + 3} width={Math.max(2, x(arrival) - labelW - 1)} height={16} rx={3} fill={COLORS.queue} />}
+          {arrival !== null && finish !== null && <rect x={x(arrival) + 1} y={yTop + 3} width={Math.max(2, x(finish) - x(arrival) - 1)} height={16} rx={3} fill={COLORS.processing} />}
+          <text x={x(finish ?? arrival ?? 0) + 6} y={yTop + 15} fontSize={9.5} fontWeight={600} fill="#3a3a3c">
+            {arrival === null ? 'ainda sem peça' : `esperou ${formatWorkDuration(arrival, daySeconds)}`}
+          </text>
+          <title>{arrival === null
+            ? `${process.label}: ainda não recebeu a primeira peça`
+            : `${process.label}: recebeu a 1ª peça em ${formatWorkDuration(arrival, daySeconds)}${finish !== null ? ` e terminou em ${formatWorkDuration(finish, daySeconds)}` : ''}`}</title>
+        </g>;
+      })}
     </svg>
   </div>;
 }
@@ -244,7 +290,7 @@ export function LiveReportPanel({ report, daySeconds, hidden = false, onClose, c
           detail={valueAddedShare !== null ? `${valueAddedShare}% agregando valor` : undefined} tone={valueAddedShare !== null ? (valueAddedShare >= 50 ? 'good' : valueAddedShare >= 20 ? 'warn' : 'bad') : undefined} />
       </div>
       <div className="report-grid">
-        <CumulativeChart report={report} daySeconds={daySeconds} />
+        <FirstPieceChart processes={report.processes} daySeconds={daySeconds} />
         <CompositionDonut report={report} />
         <ProcessTimeChart processes={report.processes} bottleneckId={report.bottleneckId} />
         <UtilizationChart processes={report.processes} bottleneckId={report.bottleneckId} />

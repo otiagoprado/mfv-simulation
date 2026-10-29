@@ -20,6 +20,10 @@ export interface LiveReportProcess {
   avgHoldingSec: number;
   /** Maior fila de entrada observada. */
   maxQueue: number;
+  /** Quando a primeira peça chegou a este processo (espera inicial da operação), ou null se ainda não chegou. */
+  firstArrivalSec: number | null;
+  /** Quando a primeira peça ficou pronta neste processo, ou null se ainda não ficou. */
+  firstFinishSec: number | null;
 }
 
 export interface LiveReportPoint {
@@ -108,7 +112,11 @@ export function buildLiveReport(flow: LiveFlow, simulation: Simulation, elapsedS
     let queue = 0;
     let maxQueue = 0;
     events.forEach((event) => { queue += event.delta; maxQueue = Math.max(maxQueue, queue); });
+    const firstArrivals = launchedUnits.map((unit) => arrivals[unit]).filter((time) => finiteBefore(time, elapsedSec));
+    const firstFinishes = launchedUnits.map((unit) => finishes[unit]).filter((time) => finiteBefore(time, elapsedSec));
     return {
+      firstArrivalSec: firstArrivals.length ? Math.min(...firstArrivals) : null,
+      firstFinishSec: firstFinishes.length ? Math.min(...firstFinishes) : null,
       id: metric.element.id,
       label: metric.element.label || 'Processo',
       unitsDone: doneUnits.length,

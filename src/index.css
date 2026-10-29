@@ -994,8 +994,8 @@ g:hover > .edit-btn-group { opacity: 1; }
 .report-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .report-legend i, .report-donut li i { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 9px; }
 .report-utilization { display: grid; gap: 7px; }
-.report-utilization > div { display: grid; grid-template-columns: minmax(90px, 150px) 1fr 38px; align-items: center; gap: 8px; font-size: 10px; }
-.report-utilization span { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-utilization > div { display: grid; grid-template-columns: minmax(90px, 150px) 1fr 38px; align-items: center; gap: 8px; min-height: 18px; font-size: 10px; line-height: 1.35; }
+.report-utilization span { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: visible; white-space: normal; line-height: 1.35; }
 .report-utilization em { padding: 1px 6px; color: #ff3b30; background: rgba(255,59,48,.12); border-radius: 999px; font-size: 8px; font-style: normal; font-weight: 700; text-transform: uppercase; }
 .report-utilization strong { text-align: right; font-variant-numeric: tabular-nums; }
 .report-bar { height: 8px; background: #f2f2f7; border-radius: 999px; overflow: hidden; }
