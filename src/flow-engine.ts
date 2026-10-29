@@ -585,6 +585,11 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   } : null;
   return {
     order,
+    /** Linha do tempo completa (segundos) para o relatório: índices [processo][unidade]. */
+    timeline,
+    release,
+    unitCount: units.length,
+    stationSpecs: stations,
     releaseInterval: demandedBatches[demandedBatches.length - 1]?.interval ?? Math.max(simulation.pitchTimeSec, pacemakerInterval * packSize),
     packSize,
     demandedPacks,

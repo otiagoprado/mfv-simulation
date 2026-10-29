@@ -31,6 +31,8 @@ import {
   type LiveUnit,
 } from './flow-engine';
 import { materialFlowOrder } from './flow-order';
+import { buildLiveReport } from './live-report';
+import { LiveReportPanel } from './LiveReport';
 import { percentValue } from './numbers';
 import type { Scenario } from './types';
 import truckThreeQuarter from './assets/truck-three-quarter.png';
@@ -2995,6 +2997,8 @@ export default function App() {
   const liveCompleted = liveFlow.completed;
   const liveWip = liveFlow.wip;
   const liveOrder = liveFlow.order;
+  // Relatório abaixo do mapa: aparece com a simulação pausada ou concluída.
+  const liveReport = liveElapsedSec > 0 && simulation.processElements.length ? buildLiveReport(liveFlow, simulation, liveElapsedSec) : null;
   useEffect(() => {
     if (liveOrder?.done && liveRunning) {
       setLiveRunning(false);
@@ -3375,6 +3379,7 @@ export default function App() {
           </div>
         )}
         {clipboardNotice && <div className="clipboard-toast"><Copy size={14}/><span>{clipboardNotice}</span></div>}
+        {liveReport && !liveRunning && <LiveReportPanel report={liveReport} daySeconds={simulatedDaySeconds} />}
       </main>
 
       {editingEl && editingEl.kind === 'identification' && (
