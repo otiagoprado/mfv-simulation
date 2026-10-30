@@ -335,11 +335,11 @@ export function PartySymbol({ el, selected, onEdit }: SymProps) {
 function TrailerLogo({ href, id, fit }: { href: string; id: string; fit: 'ajustar' | 'preencher' }) {
   // Cantos da lateral do baú em coordenadas do símbolo (imagem 1681×935 desenhada em 206×108 a partir de 2,2).
   const sx = 206 / 1681; const sy = 108 / 935;
-  const TL = { x: 2 + 22 * sx, y: 2 + 292 * sy }; const TR = { x: 2 + 688 * sx, y: 2 + 112 * sy };
-  const BL = { x: 2 + 22 * sx, y: 2 + 640 * sy }; const BR = { x: 2 + 688 * sx, y: 2 + 622 * sy };
+  const TL = { x: 2 + 24 * sx, y: 2 + 294 * sy }; const TR = { x: 2 + 686 * sx, y: 2 + 114 * sy };
+  const BL = { x: 2 + 24 * sx, y: 2 + 630 * sy }; const BR = { x: 2 + 686 * sx, y: 2 + 612 * sy };
   // Região do logo dentro da lateral (fração da largura e da altura), afastada da cabine e do friso superior.
   // A lateral inteira (com uma pequena margem para o friso e as bordas).
-  const U0 = 0.025; const U1 = 0.975; const V0 = 0.06; const V1 = 0.95;
+  const U0 = 0.02; const U1 = 0.98; const V0 = 0.04; const V1 = 0.97;
   const W = 100; const H = 50; const SLICES = 16;
   const at = (u: number, v: number) => {
     const top = { x: TL.x + (TR.x - TL.x) * u, y: TL.y + (TR.y - TL.y) * u };
@@ -419,15 +419,19 @@ export function TruckSymbol({ el, selected, onEdit, companyImage }: SymProps) {
   const logo = logoSource === 'empresa' ? (companyImage ?? '') : logoSource === 'proprio' ? String(el.data.logo ?? '') : '';
   const paintTrailer = String(el.data.logoFundo ?? 'auto') === 'auto';
   const logoBackground = useImageBackground(paintTrailer ? logo : '');
-  // Lateral do baú (mesmos cantos do logo, com margem até as bordas) pintada na cor de fundo do logo.
+  // Lateral do baú (mesmos cantos do logo) em coordenadas do símbolo.
   const sx = 206 / 1681; const sy = 108 / 935;
-  const trailerSide = [[22, 284], [690, 104], [690, 626], [22, 644]].map(([x, y]) => `${2 + x * sx},${2 + y * sy}`).join(' ');
+  const trailerSide = [[24, 294], [686, 114], [686, 612], [24, 630]].map(([x, y]) => `${2 + x * sx},${2 + y * sy}`).join(' ');
+  const sideClipId = `trailer-side-${el.id}`;
   return (
     <g>
       {selected && <SelectionRect w={w} h={h} />}
       <TintedAssetImage el={el} href={truckThreeQuarter} x={2} y={2} width={206} height={108} />
-      {logo && logoBackground && <polygon points={trailerSide} fill={logoBackground} style={{ mixBlendMode: 'multiply' }} />}
-      {logo && <TrailerLogo href={logo} id={el.id} fit={String(el.data.logoAjuste ?? 'ajustar') === 'preencher' ? 'preencher' : 'ajustar'} />}
+      {logo && <defs><clipPath id={sideClipId}><polygon points={trailerSide} /></clipPath></defs>}
+      {/* Ordem: cor de fundo exata → logo → sombreado e contornos do desenho original por cima de tudo (multiplicação). */}
+      {logo && logoBackground && <polygon points={trailerSide} fill={logoBackground} />}
+      {logo && <g clipPath={`url(#${sideClipId})`}><TrailerLogo href={logo} id={el.id} fit={String(el.data.logoAjuste ?? 'ajustar') === 'preencher' ? 'preencher' : 'ajustar'} /></g>}
+      {logo && <image href={truckThreeQuarter} x={2} y={2} width={206} height={108} preserveAspectRatio="none" clipPath={`url(#${sideClipId})`} style={{ mixBlendMode: 'multiply' }} pointerEvents="none" />}
       {el.label && <text x={w/2} y={120} textAnchor="middle" fontSize={8} fontFamily="Arial" fill="#34383e" fontWeight="700">{el.label}</text>}
       {el.data.freq && <text x={w/2} y={129} textAnchor="middle" fontSize={6.5} fontFamily="Arial" fill="#6b7178">a cada {el.data.freq} dia(s)</text>}
       <EditBtn onEdit={onEdit} x={w-2} y={5} />
