@@ -1,0 +1,10 @@
+{
+  "name": "@exata/mfv-engine",
+  "version": "0.1.0",
+  "description": "Motor de simulação de fluxo de valor (MFV): takt, carga, lotes, peças por ciclo, simulação peça a peça e relatório.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-isolation=none tests/*.test.mjs"
+  },
+  "engines": { "node": ">=22" }
+}
