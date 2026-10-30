@@ -327,37 +327,50 @@ export function PartySymbol({ el, selected, onEdit }: SymProps) {
 }
 
 // ── Caminhão ──────────────────────────────────────────────────────────────────
+/** Cantos da lateral do baú no PNG do caminhão (1681×935), medidos no desenho: atrás-cima, frente-cima, frente-baixo, atrás-baixo. */
+const TRAILER_SIDE_PX: [number, number][] = [[25, 311], [690, 96], [690, 624], [25, 651]];
+const TRUCK_IMAGE_SCALE = { x: 206 / 1681, y: 108 / 935, offset: 2 };
+const trailerSideCorners = () => TRAILER_SIDE_PX.map(([x, y]) => ({ x: TRUCK_IMAGE_SCALE.offset + x * TRUCK_IMAGE_SCALE.x, y: TRUCK_IMAGE_SCALE.offset + y * TRUCK_IMAGE_SCALE.y }));
+
+/** Homografia do quadrado unitário (u,v) para o quadrilátero da lateral: perspectiva real, como nos apps de mockup. */
+function quadProjector(corners: { x: number; y: number }[]) {
+  const [p0, p1, p2, p3] = corners;
+  const dx1 = p1.x - p2.x; const dx2 = p3.x - p2.x; const dx3 = p0.x - p1.x + p2.x - p3.x;
+  const dy1 = p1.y - p2.y; const dy2 = p3.y - p2.y; const dy3 = p0.y - p1.y + p2.y - p3.y;
+  const det = dx1 * dy2 - dx2 * dy1 || 1e-9;
+  const g = (dx3 * dy2 - dx2 * dy3) / det;
+  const h = (dx1 * dy3 - dx3 * dy1) / det;
+  const a = p1.x - p0.x + g * p1.x; const b = p3.x - p0.x + h * p3.x; const c = p0.x;
+  const d = p1.y - p0.y + g * p1.y; const e = p3.y - p0.y + h * p3.y; const f = p0.y;
+  return (u: number, v: number) => {
+    const w = g * u + h * v + 1;
+    return { x: (a * u + b * v + c) / w, y: (d * u + e * v + f) / w };
+  };
+}
+
 /**
- * Logotipo no baú do caminhão seguindo a perspectiva da imagem.
- * A lateral do baú é um trapézio; o logo é fatiado em colunas e cada fatia recebe a transformação
- * afim do seu trecho do trapézio, o que reproduz o encolhimento em perspectiva.
+ * Logotipo na lateral do baú seguindo a perspectiva do desenho.
+ * A arte é projetada por homografia sobre o quadrilátero da lateral; como o SVG só aplica transformações
+ * afins, ela é fatiada em colunas finas e cada coluna recebe a transformação do seu trecho, o que reproduz
+ * o encurtamento em perspectiva (colunas mais estreitas no fundo).
  */
 function TrailerLogo({ href, id, fit }: { href: string; id: string; fit: 'ajustar' | 'preencher' }) {
-  // Cantos da lateral do baú em coordenadas do símbolo (imagem 1681×935 desenhada em 206×108 a partir de 2,2).
-  const sx = 206 / 1681; const sy = 108 / 935;
-  const TL = { x: 2 + 24 * sx, y: 2 + 294 * sy }; const TR = { x: 2 + 686 * sx, y: 2 + 114 * sy };
-  const BL = { x: 2 + 24 * sx, y: 2 + 630 * sy }; const BR = { x: 2 + 686 * sx, y: 2 + 612 * sy };
-  // Região do logo dentro da lateral (fração da largura e da altura), afastada da cabine e do friso superior.
-  // A lateral inteira (com uma pequena margem para o friso e as bordas).
-  const U0 = 0.02; const U1 = 0.98; const V0 = 0.04; const V1 = 0.97;
-  const W = 100; const H = 50; const SLICES = 16;
-  const at = (u: number, v: number) => {
-    const top = { x: TL.x + (TR.x - TL.x) * u, y: TL.y + (TR.y - TL.y) * u };
-    const bottom = { x: BL.x + (BR.x - BL.x) * u, y: BL.y + (BR.y - BL.y) * u };
-    return { x: top.x + (bottom.x - top.x) * v, y: top.y + (bottom.y - top.y) * v };
-  };
+  const project = quadProjector(trailerSideCorners());
+  // Região da arte dentro da lateral (fração), com uma margem pequena até as bordas.
+  const U0 = 0.03; const U1 = 0.97; const V0 = 0.05; const V1 = 0.96;
+  const W = 100; const H = 48; const SLICES = 24;
   return <g>
     {Array.from({ length: SLICES }, (_, index) => {
       const f0 = index / SLICES; const f1 = (index + 1) / SLICES;
       const u0 = U0 + (U1 - U0) * f0; const u1 = U0 + (U1 - U0) * f1;
-      const p00 = at(u0, V0); const p10 = at(u1, V0); const p01 = at(u0, V1);
+      const p00 = project(u0, V0); const p10 = project(u1, V0); const p01 = project(u0, V1);
       const sliceW = W * (f1 - f0);
       const a = (p10.x - p00.x) / sliceW; const b = (p10.y - p00.y) / sliceW;
       const c = (p01.x - p00.x) / H; const d = (p01.y - p00.y) / H;
       const clipId = `${id}-logo-slice-${index}`;
       return <g key={index} transform={`matrix(${a} ${b} ${c} ${d} ${p00.x} ${p00.y})`}>
         <clipPath id={clipId}><rect x={0} y={0} width={sliceW + 0.6} height={H} /></clipPath>
-        <image href={href} x={-W * f0} y={0} width={W} height={H} preserveAspectRatio={fit === 'preencher' ? 'xMidYMid slice' : 'xMidYMid meet'} clipPath={`url(#)`} />
+        <image href={href} x={-W * f0} y={0} width={W} height={H} preserveAspectRatio={fit === 'preencher' ? 'xMidYMid slice' : 'xMidYMid meet'} clipPath={`url(#${clipId})`} />
       </g>;
     })}
   </g>;
@@ -420,8 +433,7 @@ export function TruckSymbol({ el, selected, onEdit, companyImage }: SymProps) {
   const paintTrailer = String(el.data.logoFundo ?? 'auto') === 'auto';
   const logoBackground = useImageBackground(paintTrailer ? logo : '');
   // Lateral do baú (mesmos cantos do logo) em coordenadas do símbolo.
-  const sx = 206 / 1681; const sy = 108 / 935;
-  const trailerSide = [[24, 294], [686, 114], [686, 612], [24, 630]].map(([x, y]) => `${2 + x * sx},${2 + y * sy}`).join(' ');
+  const trailerSide = trailerSideCorners().map((corner) => `${corner.x},${corner.y}`).join(' ');
   const sideClipId = `trailer-side-${el.id}`;
   return (
     <g>
