@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Activity, AlertTriangle, BarChart3, BookOpen, Calculator, CheckCircle2, Copy, Download, FileImage, FileText, GitCompareArrows,
+  Activity, AlertTriangle, BarChart3, BookOpen, Calculator, CheckCircle2, Cloud, Copy, Download, FileImage, FileText, GitCompareArrows,
   ChevronDown, FolderOpen, ImageDown, LayoutTemplate, Loader2, Map, Menu as MenuIcon, Palette, Pencil, Plus,
   Pause, Play, RotateCcw, Route, Save, Search, Sparkles, Square, Trash2, X, ZoomIn, ZoomOut, Minus,
 } from 'lucide-react';
@@ -32,6 +32,8 @@ import {
 } from './flow-engine';
 import { materialFlowOrder } from './flow-order';
 import { buildLiveReport } from './live-report';
+import { CloudProjectsModal, type CloudLink, type CloudSaveState } from './CloudProjects';
+import { CloudClient, consumeSessionFromUrl, loadCloudConfig, loadCloudSession, saveCloudConfig, type CloudConfig, type CloudSession } from './cloud-projects';
 import { LiveReportPanel } from './LiveReport';
 import { percentValue } from './numbers';
 import type { Scenario } from './types';
@@ -45,6 +47,7 @@ const OLDER_STORAGE_KEY = 'mfv-canvas:v3';
 const OLDEST_STORAGE_KEY = 'mfv-canvas:v2';
 const LEGACY_STORAGE_KEY = 'mfv-simulation:v2';
 const LIVE_ORDER_STORAGE_KEY = 'mfv-live-order:v1';
+const CLOUD_LINK_STORAGE_KEY = 'mfv-cloud-link:v1';
 const MANUAL_SEEN_KEY = 'mfv-manual-seen:v1';
 const FIXED_PLANNING_ID = '__mfv-demand-planning__';
 const FIXED_IDENTIFICATION_ID = '__mfv-identification__';
@@ -2488,6 +2491,27 @@ export default function App() {
   const saveFailureNotifiedRef = useRef(false);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
+  // Projetos na nuvem (servidor Supabase): configuração, sessão, projeto vinculado e estado do salvamento automático.
+  const [cloudConfig, setCloudConfig] = useState<CloudConfig | null>(loadCloudConfig);
+  const [cloudSession, setCloudSession] = useState<CloudSession | null>(() => consumeSessionFromUrl() ?? loadCloudSession());
+  const [cloudLink, setCloudLink] = useState<CloudLink | null>(() => {
+    try {
+      const stored = localStorage.getItem(CLOUD_LINK_STORAGE_KEY);
+      const parsed = stored ? JSON.parse(stored) as Partial<CloudLink> : null;
+      return parsed && typeof parsed.id === 'string' && typeof parsed.name === 'string' ? { id: parsed.id, name: parsed.name, client: parsed.client ?? '' } : null;
+    } catch { return null; }
+  });
+  const [cloudOpen, setCloudOpen] = useState(false);
+  const [cloudSaveState, setCloudSaveState] = useState<CloudSaveState>('idle');
+  const [cloudSaveError, setCloudSaveError] = useState('');
+  const cloudClientRef = useRef<CloudClient | null>(null);
+  if (!cloudConfig) cloudClientRef.current = null;
+  else if (!cloudClientRef.current) {
+    cloudClientRef.current = new CloudClient(cloudConfig, cloudSession, setCloudSession);
+  }
+  const cloudClient = cloudClientRef.current;
+  // A versão do workspace já enviada ao servidor: evita reenviar o projeto logo depois de abri-lo.
+  const cloudSyncedRef = useRef<CanvasWorkspace | null>(workspace);
   const [appliedLeanFixes, setAppliedLeanFixes] = useState<AppliedLeanFix[]>([]);
   const [leanUndoStack, setLeanUndoStack] = useState<CanvasState[]>([]);
   const [liveRunning, setLiveRunning] = useState(false);
@@ -2645,6 +2669,107 @@ export default function App() {
     const t = setTimeout(() => setSaved(true), 500);
     return () => clearTimeout(t);
   }, [workspace]);
+
+  useEffect(() => {
+    try {
+      if (cloudLink) localStorage.setItem(CLOUD_LINK_STORAGE_KEY, JSON.stringify(cloudLink));
+      else localStorage.removeItem(CLOUD_LINK_STORAGE_KEY);
+    } catch { /* armazenamento indisponível */ }
+  }, [cloudLink]);
+
+  // Salvamento automático na nuvem: alguns segundos depois da última alteração, envia o projeto vinculado.
+  useEffect(() => {
+    if (!cloudLink || !cloudClient || !cloudSession) return;
+    if (cloudSyncedRef.current === workspace) return;
+    setCloudSaveState('saving');
+    const timer = window.setTimeout(() => {
+      const snapshot = workspace;
+      cloudClient.update(cloudLink.id, { workspace: snapshot })
+        .then(() => {
+          cloudSyncedRef.current = snapshot;
+          setCloudSaveState('saved');
+          setCloudSaveError('');
+        })
+        .catch((error: unknown) => {
+          setCloudSaveState('error');
+          setCloudSaveError(error instanceof Error ? error.message : 'falha ao enviar');
+        });
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [workspace, cloudLink, cloudClient, cloudSession]);
+
+  const replaceWorkspace = (next: CanvasWorkspace) => {
+    undoStackRef.current = [cloneWorkspace(workspaceRef.current), ...undoStackRef.current].slice(0, 80);
+    workspaceRef.current = next;
+    setWorkspace(next);
+    setActiveKind('current');
+    setSelectedId(null);
+    setEditingEl(null);
+    setEditingArrow(null);
+  };
+
+  const changeCloudConfig = (config: CloudConfig | null) => {
+    saveCloudConfig(config);
+    cloudClientRef.current = null;
+    setCloudSession(null);
+    setCloudLink(null);
+    setCloudConfig(config);
+  };
+
+  const openCloudProject = async (id: string) => {
+    if (!cloudClient) return;
+    const record = await cloudClient.load<Partial<CanvasWorkspace>>(id);
+    const next = normalizeWorkspace(record.workspace);
+    cloudSyncedRef.current = next;
+    replaceWorkspace(next);
+    setCloudLink({ id: record.id, name: record.name, client: record.client });
+    setCloudSaveState('saved');
+    setCloudSaveError('');
+  };
+
+  const saveCloudProjectAsNew = async (name: string, client: string) => {
+    if (!cloudClient) return;
+    const snapshot = workspaceRef.current;
+    const created = await cloudClient.create(name, client, snapshot);
+    cloudSyncedRef.current = snapshot;
+    setCloudLink({ id: created.id, name: created.name, client: created.client });
+    setCloudSaveState('saved');
+    setCloudSaveError('');
+  };
+
+  const saveCloudProjectNow = async () => {
+    if (!cloudClient || !cloudLink) return;
+    const snapshot = workspaceRef.current;
+    setCloudSaveState('saving');
+    try {
+      await cloudClient.update(cloudLink.id, { workspace: snapshot });
+      cloudSyncedRef.current = snapshot;
+      setCloudSaveState('saved');
+      setCloudSaveError('');
+    } catch (error) {
+      setCloudSaveState('error');
+      setCloudSaveError(error instanceof Error ? error.message : 'falha ao enviar');
+      throw error;
+    }
+  };
+
+  const renameCloudProject = async (name: string, client: string) => {
+    if (!cloudClient || !cloudLink) return;
+    const updated = await cloudClient.update(cloudLink.id, { name, client });
+    setCloudLink({ id: updated.id, name: updated.name, client: updated.client });
+  };
+
+  const deleteCloudProject = async (id: string) => {
+    if (!cloudClient) return;
+    await cloudClient.remove(id);
+    if (cloudLink?.id === id) { setCloudLink(null); setCloudSaveState('idle'); }
+  };
+
+  const unlinkCloudProject = () => {
+    setCloudLink(null);
+    setCloudSaveState('idle');
+    setCloudSaveError('');
+  };
 
   const toCanvas = useCallback((cx: number, cy: number) => ({
     x: (cx - pan.x) / zoom, y: (cy - pan.y) / zoom,
@@ -3229,13 +3354,9 @@ export default function App() {
         message: `O projeto “${file.name}” vai substituir o Estado atual e todos os cenários deste navegador. Você pode desfazer logo em seguida.`,
         confirmLabel: 'Abrir projeto',
         onConfirm: () => {
-          undoStackRef.current = [cloneWorkspace(workspaceRef.current), ...undoStackRef.current].slice(0, 80);
-          workspaceRef.current = imported;
-          setWorkspace(imported);
-          setActiveKind('current');
-          setSelectedId(null);
-          setEditingEl(null);
-          setEditingArrow(null);
+          // Um arquivo é outro projeto: deixa de salvar automaticamente no projeto da nuvem que estava aberto.
+          unlinkCloudProject();
+          replaceWorkspace(imported);
         },
       });
     } catch (error) {
@@ -3290,6 +3411,10 @@ export default function App() {
               <button onClick={applyExcelTemplate} title="Montar o fluxo padrão usado no Excel"><LayoutTemplate size={17} /><span>Modelo base do Excel</span></button>
               <button onClick={exportProjectFile} title="Baixar o projeto completo para backup ou para enviar a outra pessoa"><Save size={17} /><span>Salvar projeto (.json)</span></button>
               <button onClick={() => projectFileInputRef.current?.click()} title="Abrir um projeto salvo em arquivo"><FolderOpen size={17} /><span>Abrir projeto (.json)</span></button>
+              <button className={`sidebar-cloud-button ${cloudSaveState}`} onClick={() => setCloudOpen(true)} title="Guardar os projetos no servidor e buscar pelo nome">
+                <Cloud size={17} /><span>Projetos na nuvem</span>
+                {cloudLink && <small>{cloudSaveState === 'saving' ? 'salvando…' : cloudSaveState === 'error' ? 'não salvo' : cloudLink.name}</small>}
+              </button>
               <input ref={projectFileInputRef} type="file" accept="application/json,.json" hidden
                 onChange={(event) => { void importProjectFile(event.target.files?.[0]); event.target.value = ''; }} />
               <button className="sidebar-export-button" onClick={() => { resetLiveSimulation(); setSelectedId(null); setExportOpen(true); }}><Download size={17} /><span>Imprimir e exportar</span></button>
@@ -3599,6 +3724,12 @@ export default function App() {
         focusAssistantTarget(targetId);
       }} onClose={() => setStressTestOpen(false)} />}
       {manualOpen && <ManualModal onClose={closeManual} />}
+      {cloudOpen && <CloudProjectsModal
+        config={cloudConfig} client={cloudClient} signedIn={cloudSession !== null} email={cloudSession?.email ?? ''}
+        link={cloudLink} saveState={cloudSaveState} saveError={cloudSaveError}
+        onConfigChange={changeCloudConfig} onOpen={openCloudProject} onSaveAsNew={saveCloudProjectAsNew}
+        onSaveCurrent={saveCloudProjectNow} onRename={renameCloudProject} onDelete={deleteCloudProject}
+        onUnlink={unlinkCloudProject} onClose={() => setCloudOpen(false)} />}
       {appDialog && <AppDialog dialog={appDialog} onClose={() => setAppDialog(null)} />}
     </div>
   );
