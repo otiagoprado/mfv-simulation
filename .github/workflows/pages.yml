@@ -29,6 +29,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # O site fica em https://<usuário>.github.io/<repositório>/, então os assets precisam desse prefixo.
       - run: pnpm exec vite build --base=/${{ github.event.repository.name }}/
+        # Projetos na nuvem: definidos em Settings → Secrets and variables → Actions → Variables (vazios = recurso configurado na tela).
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
