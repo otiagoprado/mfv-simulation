@@ -230,21 +230,33 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
   ];
   const routeStartX = rawMaterialEntry ? rawMaterialEntry.x + elementDimensions(rawMaterialEntry).width / 2 : 0;
   const routeEndX = finalCustomer ? finalCustomer.x + elementDimensions(finalCustomer).width / 2 : 0;
-  const productionRouteElements = rawMaterialEntry && finalCustomer
-    ? [
-        rawMaterialEntry,
-        ...canvas.elements
-          .filter((element) => routeKinds.includes(element.kind))
-          .filter((element) => {
-            const centerX = element.x + elementDimensions(element).width / 2;
-            return centerX >= Math.min(routeStartX, routeEndX) && centerX <= Math.max(routeStartX, routeEndX);
-          })
-          .sort((a, b) => routeStartX <= routeEndX ? a.x - b.x : b.x - a.x),
-        finalCustomer,
-      ]
-    : [];
   const flowOrder = materialFlowOrder(canvas.elements, canvas.arrows);
   const processElements = flowOrder.processes;
+  // Elementos da rota pela posição horizontal: vale para o trecho antes do primeiro processo e depois do último.
+  const positionalRoute = canvas.elements
+    .filter((element) => routeKinds.includes(element.kind))
+    .filter((element) => {
+      const centerX = element.x + elementDimensions(element).width / 2;
+      return centerX >= Math.min(routeStartX, routeEndX) && centerX <= Math.max(routeStartX, routeEndX);
+    })
+    .sort((a, b) => routeStartX <= routeEndX ? a.x - b.x : b.x - a.x);
+  const centerXOf = (element: CanvasElement) => element.x + elementDimensions(element).width / 2;
+  // Entre os processos, a rota segue a ordem das setas (com os estoques ligados entre um processo e o próximo).
+  const routeBetweenProcesses = processElements.flatMap((process, index) => (
+    index < processElements.length - 1 ? [process, ...(flowOrder.between.get(process.id) ?? [])] : [process]
+  ));
+  const routedIds = new Set(routeBetweenProcesses.map((element) => element.id));
+  const firstProcess = processElements[0];
+  const lastProcess = processElements[processElements.length - 1];
+  const beforeProcesses = firstProcess
+    ? positionalRoute.filter((element) => !routedIds.has(element.id) && !['process', 'shared-process'].includes(element.kind) && centerXOf(element) < centerXOf(firstProcess))
+    : positionalRoute;
+  const afterProcesses = lastProcess
+    ? positionalRoute.filter((element) => !routedIds.has(element.id) && !['process', 'shared-process'].includes(element.kind) && centerXOf(element) > centerXOf(lastProcess))
+    : [];
+  const productionRouteElements = rawMaterialEntry && finalCustomer
+    ? [rawMaterialEntry, ...beforeProcesses, ...routeBetweenProcesses, ...afterProcesses, finalCustomer]
+    : [];
   let cumulativeYield = 1;
   const processMetrics = [...processElements].reverse().map((element) => {
     const quality = Math.min(100, Math.max(0.1, percentValue(element.data.qualidade))) / 100;

@@ -1387,6 +1387,10 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
     }
     const from = stationBoxes[station - 1];
     const to = stationBoxes[station];
+    // Entre dois processos, passa pelos estoques ligados por setas entre eles (quando estão na rota).
+    const fromIndex = routeIndexOf(simulation.processMetrics[station - 1]?.element.id);
+    const toIndex = routeIndexOf(simulation.processMetrics[station]?.element.id);
+    if (fromIndex >= 0 && toIndex > fromIndex) return route.slice(fromIndex, toIndex + 1);
     return [{ x: from.cx, y: from.cy }, { x: to.cx, y: to.cy }];
   };
   const STACK_COLUMNS = 4;

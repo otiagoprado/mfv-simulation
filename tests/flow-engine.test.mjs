@@ -79,3 +79,15 @@ test('processos empilhados na mesma coluna somam os tempos em um único degrau d
     ['d', 'process', 1.6, ['d']],
   ]);
 });
+
+test('a rota da simulação segue as setas entre os processos, não a posição horizontal', () => {
+  const raw = { id: 'raw', kind: 'raw-material', x: 0, y: 0, label: 'MP', data: { qty: 100 } };
+  const customer = { id: 'cli', kind: 'customer', x: 1200, y: 0, label: 'Cliente', data: {} };
+  const stock = { id: 'stock', kind: 'inventory', x: 750, y: 400, label: 'Estoque', data: { qty: 10 } };
+  const arrow = (from, to) => ({ id: `${from}-${to}`, kind: 'arrow-push', x1: 0, y1: 0, x2: 1, y2: 1, startAnchor: { elementId: from, x: 1, y: 0.5 }, endAnchor: { elementId: to, x: 0, y: 0.5 } });
+  const simulation = calculateCanvasSimulation(canvas(
+    [raw, process('a', 300, 60), { ...process('b', 900, 60), y: 400 }, { ...process('c', 600, 60), y: 400 }, stock, customer],
+    [arrow('raw', 'a'), arrow('a', 'b'), arrow('b', 'stock'), arrow('stock', 'c'), arrow('c', 'cli')],
+  ));
+  assert.deepEqual(simulation.productionRouteElements.map((element) => element.id), ['raw', 'a', 'b', 'stock', 'c', 'cli']);
+});
