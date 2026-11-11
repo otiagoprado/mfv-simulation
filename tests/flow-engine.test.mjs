@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateCanvasSimulation, calculateKanbanSizing, calculateScenario } from '../src/flow-engine.ts';
+import { calculateCanvasSimulation, calculateKanbanSizing, calculateScenario, mergeStackedTimelineItems } from '../src/flow-engine.ts';
 
 const assumptions = {
   monthlyDemand: 4800,
@@ -62,4 +62,20 @@ test('peças por ciclo multiplicam a capacidade do processo', () => {
   const single = calculateCanvasSimulation(canvas([process('a', 0, 60)]));
   const five = calculateCanvasSimulation(canvas([process('a', 0, 60, { pecasCiclo: 5 })]));
   close(five.processMetrics[0].capacityPerDay, single.processMetrics[0].capacityPerDay * 5);
+});
+
+test('processos empilhados na mesma coluna somam os tempos em um único degrau da linha do tempo', () => {
+
+  const items = [
+    { id: 'a', type: 'process', x: 380, width: 120, value: 1.3 },
+    { id: 'b', type: 'inventory', x: 530, width: 60, value: 0.5 },
+    { id: 'c', type: 'process', x: 380, width: 120, value: 0.5 },
+    { id: 'd', type: 'process', x: 680, width: 120, value: 1.6 },
+  ];
+  const merged = mergeStackedTimelineItems(items);
+  assert.deepEqual(merged.map((item) => [item.id, item.type, Number(item.value.toFixed(2)), item.members]), [
+    ['a', 'process', 1.8, ['a', 'c']],
+    ['b', 'inventory', 0.5, ['b']],
+    ['d', 'process', 1.6, ['d']],
+  ]);
 });

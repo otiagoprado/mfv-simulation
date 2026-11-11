@@ -170,6 +170,45 @@ export function nearestProcess(marker: CanvasElement, processes: CanvasElement[]
   }, undefined as { process: CanvasElement; distance: number } | undefined)?.process;
 }
 
+export interface TimelineItem {
+  id: string;
+  type: 'process' | 'inventory';
+  /** Centro horizontal no mapa. */
+  x: number;
+  width: number;
+  /** Minutos (processo) ou dias (estoque). */
+  value: number;
+  /** Elementos somados neste degrau, quando há mais de um empilhado na mesma coluna. */
+  members?: string[];
+}
+
+/**
+ * Elementos empilhados na mesma coluna (um processo em cima do outro, ou estoques) viram um único
+ * degrau da linha do tempo, com os tempos somados. Dois itens ficam na mesma coluna quando suas
+ * larguras se sobrepõem na horizontal.
+ */
+export function mergeStackedTimelineItems(items: TimelineItem[]): TimelineItem[] {
+  const merged: TimelineItem[] = [];
+  [...items].sort((a, b) => a.x - b.x).forEach((item) => {
+    const last = merged[merged.length - 1];
+    const overlaps = last && last.type === item.type && item.x - item.width / 2 < last.x + last.width / 2 - 8;
+    if (!overlaps) {
+      merged.push({ ...item, members: [item.id] });
+      return;
+    }
+    const members = [...(last.members ?? [last.id]), item.id];
+    const count = members.length;
+    merged[merged.length - 1] = {
+      ...last,
+      x: (last.x * (count - 1) + item.x) / count,
+      width: Math.max(last.width, item.width),
+      value: last.value + item.value,
+      members,
+    };
+  });
+  return merged;
+}
+
 export function calculateCanvasSimulation(canvas: CanvasState) {
   const scenario = calculateScenario(canvas.assumptions);
   const leveling = buildLeveledSequence(scenario.productMetrics);
@@ -282,7 +321,7 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
   const waitingTimeMin = waitingElements.reduce((sum, element) => sum + Math.max(0, Number(element.data.durationMin) || 0), 0);
   const waitingLeadTimeDays = canvas.assumptions.availableMinutesPerDay > 0 ? waitingTimeMin / canvas.assumptions.availableMinutesPerDay : 0;
   const processingTimeMin = processElements.reduce((sum, element) => sum + Math.max(0, Number(element.data.tc) || 0), 0) / 60;
-  const timelineItems = [
+  const rawTimelineItems = [
     ...processElements.map((element) => {
       const size = elementDimensions(element);
       return {
@@ -303,6 +342,7 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
       return { id: element.id, type: 'inventory' as const, x: element.x + size.width / 2, width: size.width, value };
     }),
   ].sort((a, b) => a.x - b.x);
+  const timelineItems = mergeStackedTimelineItems(rawTimelineItems);
   return {
     dailyDemand,
     taktTimeSec,
