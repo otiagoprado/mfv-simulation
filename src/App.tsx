@@ -30,7 +30,7 @@ import {
   defaultElementDimensions, elementDimensions, nearestProcess, normalizedProductMix, positiveNumber,
   type LiveUnit,
 } from './flow-engine';
-import { materialFlowOrder } from './flow-order';
+import { materialFlowOrder, resolveLooseArrowEnds } from './flow-order';
 import { buildLiveReport } from './live-report';
 import { CloudProjectsModal, type CloudLink, type CloudSaveState } from './CloudProjects';
 import { CloudClient, consumeSessionFromUrl, loadCloudConfig, loadCloudSession, saveCloudConfig, type CloudConfig, type CloudSession } from './cloud-projects';
@@ -1361,7 +1361,24 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
     const size = elementDimensions(element);
     return { id: element.id, x: element.x + size.width * 0.42, y: element.y + size.height * 0.43, element, size };
   });
-  const route = centers;
+  // A rota segue o traçado das setas desenhadas entre cada elemento e o seguinte (com as dobras);
+  // sem seta entre os dois, vai em linha reta de centro a centro.
+  const routeArrows = syncAnchoredArrows(resolveLooseArrowEnds(canvas.elements, canvas.arrows), canvas.elements);
+  const connectorPoints = (from: CanvasElement, to: CanvasElement) => {
+    const forward = routeArrows.find((arrow) => arrow.kind !== 'arrow-pull' && arrow.startAnchor?.elementId === from.id && arrow.endAnchor?.elementId === to.id);
+    if (forward) return arrowVertices(forward);
+    const pull = routeArrows.find((arrow) => arrow.kind === 'arrow-pull' && arrow.startAnchor?.elementId === to.id && arrow.endAnchor?.elementId === from.id);
+    return pull ? arrowVertices(pull).reverse() : [];
+  };
+  const route: { x: number; y: number }[] = [];
+  // Índice, em `route`, do centro de cada elemento da rota.
+  const routePointIndex: number[] = [];
+  stageElements.forEach((element, index) => {
+    if (index > 0) route.push(...connectorPoints(stageElements[index - 1], element));
+    routePointIndex.push(route.length);
+    route.push(centers[index]);
+  });
+  const routeSlice = (fromElement: number, toElement: number) => route.slice(routePointIndex[fromElement], routePointIndex[toElement] + 1);
   const liveFlow = calculateLiveFlow(simulation, canvas.assumptions, elapsedSec, { orderQuantity });
   const stationBoxes = simulation.processMetrics.map((metric) => {
     const size = elementDimensions(metric.element);
@@ -1377,20 +1394,20 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
   const shippingSize = simulation.shippingPoint ? elementDimensions(simulation.shippingPoint) : null;
   const shippingCenter = simulation.shippingPoint && shippingSize
     ? { x: simulation.shippingPoint.x + shippingSize.width / 2, y: simulation.shippingPoint.y + shippingSize.height / 2 }
-    : route[route.length - 1];
+    : centers[centers.length - 1];
   const legPoints = (station: number) => {
-    if (station === 0) return firstRouteIndex > 0 ? route.slice(0, firstRouteIndex + 1) : [route[0], { x: stationBoxes[0].cx, y: stationBoxes[0].cy }];
+    if (station === 0) return firstRouteIndex > 0 ? routeSlice(0, firstRouteIndex) : [centers[0], { x: stationBoxes[0].cx, y: stationBoxes[0].cy }];
     if (station >= stationBoxes.length) {
       const last = stationBoxes[stationBoxes.length - 1];
-      if (lastRouteIndex >= 0 && shippingRouteIndex > lastRouteIndex) return route.slice(lastRouteIndex, shippingRouteIndex + 1);
+      if (lastRouteIndex >= 0 && shippingRouteIndex > lastRouteIndex) return routeSlice(lastRouteIndex, shippingRouteIndex);
       return [{ x: last.cx, y: last.cy }, shippingCenter];
     }
     const from = stationBoxes[station - 1];
     const to = stationBoxes[station];
-    // Entre dois processos, passa pelos estoques ligados por setas entre eles (quando estão na rota).
+    // Entre dois processos, segue as setas e passa pelos estoques ligados entre eles.
     const fromIndex = routeIndexOf(simulation.processMetrics[station - 1]?.element.id);
     const toIndex = routeIndexOf(simulation.processMetrics[station]?.element.id);
-    if (fromIndex >= 0 && toIndex > fromIndex) return route.slice(fromIndex, toIndex + 1);
+    if (fromIndex >= 0 && toIndex > fromIndex) return routeSlice(fromIndex, toIndex);
     return [{ x: from.cx, y: from.cy }, { x: to.cx, y: to.cy }];
   };
   const STACK_COLUMNS = 4;
