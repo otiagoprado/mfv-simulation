@@ -188,13 +188,13 @@ test('com estoque intermediário, a movimentação só começa quando o processo
   const canvas = { elements: [process('a', 0, 60), stock, process('b', 400, 300)], arrows: [arrow('a', 'stock'), arrow('stock', 'b')], assumptions, themeColor: '#0071e3' };
   const simulation = calculateCanvasSimulation(canvas);
   const flow = calculateLiveFlow(simulation, assumptions, 1000, { orderQuantity: 3 });
-  // 1ª peça: pronta em "a" aos 60 s, 60 s de transporte, começa em "b" aos 120 s e termina aos 420 s.
-  assert.equal(flow.timeline.start[1][0], 120);
-  // 2ª peça: pronta aos 120 s, espera no estoque até "b" desocupar (420 s), transporte, começa aos 480 s.
-  assert.equal(flow.timeline.start[1][1], 480);
-  assert.equal(flow.timeline.arrival[1][1], 480);
-  // Durante o transporte (420–480 s) a peça está em trânsito e "b" está parado.
-  const during = calculateLiveFlow(simulation, assumptions, 450, { orderQuantity: 3 });
+  // 1ª peça: chega em "a" aos 60 s (transporte inicial), pronta aos 120 s, 60 s de transporte, começa em "b" aos 180 s e termina aos 480 s.
+  assert.equal(flow.timeline.start[1][0], 180);
+  // 2ª peça: pronta aos 180 s, espera no estoque até "b" desocupar (480 s), transporte, começa aos 540 s.
+  assert.equal(flow.timeline.start[1][1], 540);
+  assert.equal(flow.timeline.arrival[1][1], 540);
+  // Durante o transporte (480–540 s) a peça está em trânsito e "b" está parado.
+  const during = calculateLiveFlow(simulation, assumptions, 510, { orderQuantity: 3 });
   assert.equal(during.units.find((unit) => unit.index === 1).stage.kind, 'transit');
   assert.equal(during.stations[1].processing, 0);
 });
