@@ -257,6 +257,14 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
   const productionRouteElements = rawMaterialEntry && finalCustomer
     ? [rawMaterialEntry, ...beforeProcesses, ...routeBetweenProcesses, ...afterProcesses, finalCustomer]
     : [];
+  // Estoque intermediário antes de cada processo (ligado por setas entre ele e o anterior): a peça pronta
+  // espera ali enquanto o processo seguinte ainda está ocupado. Sem estoque, espera na entrada do processo.
+  const intermediateStockKinds: ElementKind[] = ['inventory', 'safety-stock', 'buffer', 'supermarket', 'fifo', 'warehouse', 'finished-goods'];
+  const intermediateStocks: (CanvasElement | null)[] = processElements.map((process, index) => {
+    if (index === 0) return null;
+    const between = flowOrder.between.get(processElements[index - 1].id) ?? [];
+    return between.find((element) => intermediateStockKinds.includes(element.kind)) ?? null;
+  });
   let cumulativeYield = 1;
   const processMetrics = [...processElements].reverse().map((element) => {
     const quality = Math.min(100, Math.max(0.1, percentValue(element.data.qualidade))) / 100;
@@ -401,6 +409,7 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
     shippingLot,
     routeReady: Boolean(rawMaterialEntry && finalCustomer),
     productionRouteElements,
+    intermediateStocks,
   };
 }
 
@@ -412,6 +421,8 @@ export const LIVE_MAX_DAYS = 10;
 export type LiveUnitStage =
   /** A caminho do processo `station` (ou do cliente, quando `station` é o número de processos). */
   | { kind: 'transit'; station: number; progress: number }
+  /** Pronta no processo anterior, esperando no estoque intermediário porque `station` ainda está ocupado. */
+  | { kind: 'stock'; station: number; position: number }
   /** No buffer de entrada do processo, esperando a vez ou o lote completar. */
   | { kind: 'queue'; station: number; position: number }
   /** Em setup ou sendo produzida no processo. */
@@ -430,6 +441,8 @@ export interface LiveUnit {
 
 export interface LiveStationState {
   id: string;
+  /** Peças prontas no estoque intermediário antes deste processo, esperando ele desocupar. */
+  stocked: number;
   waiting: number;
   processing: number;
   holding: number;
@@ -593,7 +606,13 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
 
   const launchedUnits = units.map((_, unit) => unit).filter((unit) => release[unit] <= elapsedSec);
   const launchedBatches = demandedBatches.filter((batch) => units.some((candidate, unit) => candidate === batch && release[unit] <= elapsedSec));
-  const stationStates: LiveStationState[] = stations.map((station) => ({ id: station.id, waiting: 0, processing: 0, holding: 0 }));
+  const stationStates: LiveStationState[] = stations.map((station) => ({ id: station.id, stocked: 0, waiting: 0, processing: 0, holding: 0 }));
+  // Espera no estoque intermediário: a peça pronta só sai do estoque quando o processo seguinte vai
+  // desocupar, chegando nele na hora de começar. O tempo total até começar não muda; muda onde ela espera.
+  const stockWaitSec = (station: number, unit: number) => {
+    if (station === 0 || !simulation.intermediateStocks[station]) return 0;
+    return Math.max(0, timeline.start[station][unit] - timeline.arrival[station][unit]);
+  };
   const liveUnits: LiveUnit[] = [];
   let completed = 0;
   let shippingWaiting = 0;
@@ -606,7 +625,11 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     for (let station = 0; station < stations.length && !stage; station += 1) {
       const leftAt = station === 0 ? release[unit] : timeline.depart[station - 1][unit];
       const arrival = timeline.arrival[station][unit];
-      if (elapsedSec < arrival) stage = { kind: 'transit', station, progress: (elapsedSec - leftAt) / Math.max(1, arrival - leftAt) };
+      const stockWait = stockWaitSec(station, unit);
+      const transitStart = leftAt + stockWait;
+      const transitEnd = arrival + stockWait;
+      if (elapsedSec < transitStart) stage = { kind: 'stock', station, position: stationStates[station].stocked++ };
+      else if (elapsedSec < transitEnd) stage = { kind: 'transit', station, progress: (elapsedSec - transitStart) / Math.max(1, transitEnd - transitStart) };
       else if (elapsedSec < timeline.start[station][unit]) stage = { kind: 'queue', station, position: stationStates[station].waiting++ };
       else if (elapsedSec < timeline.finish[station][unit]) stage = { kind: 'processing', station, position: stationStates[station].processing++ };
       else if (elapsedSec < timeline.depart[station][unit]) stage = { kind: 'holding', station, position: stationStates[station].holding++ };

@@ -1440,6 +1440,17 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
       }
     }
     else if (stage.position >= STACK_VISIBLE) return [];
+    else if (stage.kind === 'stock') {
+      // Peça pronta esperando no estoque intermediário, empilhada logo abaixo do símbolo do estoque.
+      const stock = simulation.intermediateStocks[stage.station];
+      const size = stock ? elementDimensions(stock) : { width: 60, height: 60 };
+      const column = stage.position % STACK_COLUMNS;
+      const row = Math.floor(stage.position / STACK_COLUMNS);
+      const left = stock ? stock.x + size.width / 2 - 22 : box.left - 60;
+      const floor = stock ? stock.y + size.height + 34 : box.trayFloor;
+      point = { x: left + column * 15, y: floor - 7 - row * 13 };
+      scale = 0.55;
+    }
     else if (stage.kind === 'processing') {
       const count = Math.min(STACK_VISIBLE, liveFlow.stations[stage.station].processing);
       point = { x: box.cx + (stage.position - (count - 1) / 2) * 22, y: box.cy };

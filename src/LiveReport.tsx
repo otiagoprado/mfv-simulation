@@ -10,7 +10,8 @@ const COLORS = {
   completed: APPLE.blue,
   launched: APPLE.gray,
   processing: APPLE.blue,
-  queue: APPLE.amber,
+  stockWait: APPLE.amber,
+  queue: APPLE.gray,
   holding: APPLE.red,
   transit: APPLE.gray3,
   critical: APPLE.red,
@@ -109,7 +110,7 @@ function FirstPieceChart({ processes, daySeconds }: { processes: LiveReportProce
     <div className="report-chart-head">
       <h4>Espera de cada operação até a primeira peça</h4>
       <div className="report-legend">
-        <span><i style={{ background: COLORS.queue }} />Parada esperando a 1ª peça</span>
+        <span><i style={{ background: COLORS.stockWait }} />Parada esperando a 1ª peça</span>
         <span><i style={{ background: COLORS.processing }} />1ª peça em produção</span>
       </div>
     </div>
@@ -130,7 +131,7 @@ function FirstPieceChart({ processes, daySeconds }: { processes: LiveReportProce
           <text x={labelW - 10} y={yTop + 14} textAnchor="end" fontSize={10} fontWeight={500} fill="#1c1c1e">
             {process.label.length > 24 ? `${process.label.slice(0, 23)}…` : process.label}
           </text>
-          {arrival !== null && arrival > 0 && <rect x={labelW} y={yTop + 3} width={Math.max(2, x(arrival) - labelW - 1)} height={16} rx={3} fill={COLORS.queue} />}
+          {arrival !== null && arrival > 0 && <rect x={labelW} y={yTop + 3} width={Math.max(2, x(arrival) - labelW - 1)} height={16} rx={3} fill={COLORS.stockWait} />}
           {arrival !== null && finish !== null && <rect x={x(arrival) + 1} y={yTop + 3} width={Math.max(2, x(finish) - x(arrival) - 1)} height={16} rx={3} fill={COLORS.processing} />}
           <text x={x(finish ?? arrival ?? 0) + 6} y={yTop + 15} fontSize={9.5} fontWeight={600} fill="#3a3a3c">
             {arrival === null ? 'ainda sem peça' : `esperou ${formatWorkDuration(arrival, daySeconds)}`}
@@ -147,13 +148,14 @@ function FirstPieceChart({ processes, daySeconds }: { processes: LiveReportProce
 /** Barras horizontais empilhadas: tempo médio por unidade em cada processo (fila, produção, espera do lote). */
 function ProcessTimeChart({ processes, bottleneckId }: { processes: LiveReportProcess[]; bottleneckId: string | null }) {
   const [hover, setHover] = useState<string | null>(null);
-  const maxTotal = Math.max(1, ...processes.map((process) => process.avgQueueSec + process.avgProcessSec + process.avgHoldingSec));
+  const maxTotal = Math.max(1, ...processes.map((process) => process.avgStockWaitSec + process.avgQueueSec + process.avgProcessSec + process.avgHoldingSec));
   const rowH = 30; const labelW = 150; const width = 640; const right = 56; const plotW = width - labelW - right;
   const height = processes.length * rowH + 8;
   return <div className="report-chart">
     <div className="report-chart-head">
       <h4>Tempo médio por unidade em cada processo</h4>
       <div className="report-legend">
+        <span><i style={{ background: COLORS.stockWait }} />Espera no estoque intermediário</span>
         <span><i style={{ background: COLORS.queue }} />Fila na entrada</span>
         <span><i style={{ background: COLORS.processing }} />Produção</span>
         <span><i style={{ background: COLORS.holding }} />Espera do lote na saída</span>
@@ -163,6 +165,7 @@ function ProcessTimeChart({ processes, bottleneckId }: { processes: LiveReportPr
       {processes.map((process, index) => {
         const yTop = index * rowH + 6;
         const segments = [
+          { key: 'stock', value: process.avgStockWaitSec, color: COLORS.stockWait },
           { key: 'queue', value: process.avgQueueSec, color: COLORS.queue },
           { key: 'processing', value: process.avgProcessSec, color: COLORS.processing },
           { key: 'holding', value: process.avgHoldingSec, color: COLORS.holding },
@@ -182,7 +185,7 @@ function ProcessTimeChart({ processes, bottleneckId }: { processes: LiveReportPr
             return segmentW > 0 ? rect : null;
           })}
           <text x={labelW + (total / maxTotal) * plotW + 6} y={yTop + 15} fontSize={9.5} fill="#3a3a3c" fontWeight={600}>{formatMinutes(total)}</text>
-          {hover === process.id && <title>{`${process.label}: fila ${formatMinutes(process.avgQueueSec)} · produção ${formatMinutes(process.avgProcessSec)} · espera do lote ${formatMinutes(process.avgHoldingSec)}`}</title>}
+          {hover === process.id && <title>{`${process.label}: estoque intermediário ${formatMinutes(process.avgStockWaitSec)} · fila ${formatMinutes(process.avgQueueSec)} · produção ${formatMinutes(process.avgProcessSec)} · espera do lote ${formatMinutes(process.avgHoldingSec)}`}</title>}
         </g>;
       })}
     </svg>
@@ -211,6 +214,7 @@ function UtilizationChart({ processes, bottleneckId }: { processes: LiveReportPr
 function CompositionDonut({ report }: { report: LiveReportData }) {
   const parts = [
     { key: 'processing', label: 'Produção', value: report.composition.processing, color: COLORS.processing },
+    { key: 'stock', label: 'Espera no estoque intermediário', value: report.composition.stockWait, color: COLORS.stockWait },
     { key: 'queue', label: 'Fila na entrada', value: report.composition.queue, color: COLORS.queue },
     { key: 'holding', label: 'Espera do lote', value: report.composition.holding, color: COLORS.holding },
     { key: 'transit', label: 'Movimentação', value: report.composition.transit, color: COLORS.transit },
@@ -297,12 +301,13 @@ export function LiveReportPanel({ report, daySeconds, hidden = false, onClose, c
       </div>
       <div className="report-table-wrap">
         <table className="report-table">
-          <thead><tr><th>Processo</th><th>Unidades</th><th>Ocupação</th><th>Fila média</th><th>Produção média</th><th>Espera do lote</th><th>Maior fila</th></tr></thead>
+          <thead><tr><th>Processo</th><th>Unidades</th><th>Ocupação</th><th>Espera no estoque</th><th>Fila média</th><th>Produção média</th><th>Espera do lote</th><th>Maior fila</th></tr></thead>
           <tbody>
             {report.processes.map((process) => <tr key={process.id} className={process.id === report.bottleneckId ? 'bottleneck' : ''}>
               <td>{process.label}</td>
               <td>{formatNumber(process.unitsDone)}</td>
               <td>{Math.round(process.utilization * 100)}%</td>
+              <td title={process.hasStock ? 'Peça pronta no processo anterior esperando no estoque intermediário' : 'Sem estoque intermediário antes deste processo'}>{process.hasStock ? formatMinutes(process.avgStockWaitSec) : '—'}</td>
               <td>{formatMinutes(process.avgQueueSec)}</td>
               <td>{formatMinutes(process.avgProcessSec)}</td>
               <td>{formatMinutes(process.avgHoldingSec)}</td>

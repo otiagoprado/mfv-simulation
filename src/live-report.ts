@@ -15,6 +15,10 @@ export interface LiveReportProcess {
   /** Ocupação em relação ao tempo simulado (0–1). */
   utilization: number;
   /** Médias por unidade, em segundos. */
+  /** Espera no estoque intermediário antes deste processo (peça pronta no anterior, processo ocupado). */
+  avgStockWaitSec: number;
+  /** Há estoque intermediário ligado entre o processo anterior e este. */
+  hasStock: boolean;
   avgQueueSec: number;
   avgProcessSec: number;
   avgHoldingSec: number;
@@ -49,7 +53,7 @@ export interface LiveReport {
   taktTimeSec: number;
   throughputPerHour: number | null;
   /** Composição média do atravessamento de uma unidade concluída, em segundos. */
-  composition: { queue: number; processing: number; holding: number; transit: number };
+  composition: { stockWait: number; queue: number; processing: number; holding: number; transit: number };
   processes: LiveReportProcess[];
   bottleneckId: string | null;
   series: LiveReportPoint[];
@@ -63,12 +67,15 @@ export function buildLiveReport(flow: LiveFlow, simulation: Simulation, elapsedS
   const launchedUnits = Array.from({ length: unitCount }, (_, unit) => unit).filter((unit) => release[unit] <= elapsedSec);
   const readyUnits = launchedUnits.filter((unit) => finiteBefore(timeline.shippingArrival[unit], elapsedSec));
 
-  const composition = { queue: 0, processing: 0, holding: 0, transit: 0 };
+  // Espera antes de começar: no estoque intermediário quando há um ligado antes do processo; senão, na entrada.
+  const hasStockBefore = (station: number) => station > 0 && Boolean(simulation.intermediateStocks[station]);
+  const composition = { stockWait: 0, queue: 0, processing: 0, holding: 0, transit: 0 };
   readyUnits.forEach((unit) => {
     stations.forEach((_, station) => {
       const leftPrevious = station === 0 ? release[unit] : timeline.depart[station - 1][unit];
       composition.transit += timeline.arrival[station][unit] - leftPrevious;
-      composition.queue += timeline.start[station][unit] - timeline.arrival[station][unit];
+      const waitSec = timeline.start[station][unit] - timeline.arrival[station][unit];
+      if (hasStockBefore(station)) composition.stockWait += waitSec; else composition.queue += waitSec;
       composition.processing += timeline.finish[station][unit] - timeline.start[station][unit];
       composition.holding += timeline.depart[station][unit] - timeline.finish[station][unit];
     });
@@ -77,6 +84,7 @@ export function buildLiveReport(flow: LiveFlow, simulation: Simulation, elapsedS
   });
   const readyCount = readyUnits.length;
   if (readyCount) {
+    composition.stockWait /= readyCount;
     composition.queue /= readyCount;
     composition.processing /= readyCount;
     composition.holding /= readyCount;
@@ -122,7 +130,9 @@ export function buildLiveReport(flow: LiveFlow, simulation: Simulation, elapsedS
       unitsDone: doneUnits.length,
       busySec,
       utilization: elapsedSec > 0 ? Math.min(1, busySec / elapsedSec) : 0,
-      avgQueueSec: average(doneUnits.map((unit) => starts[unit] - arrivals[unit])),
+      hasStock: hasStockBefore(station),
+      avgStockWaitSec: hasStockBefore(station) ? average(doneUnits.map((unit) => starts[unit] - arrivals[unit])) : 0,
+      avgQueueSec: hasStockBefore(station) ? 0 : average(doneUnits.map((unit) => starts[unit] - arrivals[unit])),
       avgProcessSec: average(doneUnits.map((unit) => (finishes[unit] - starts[unit]) / Math.max(1, spec?.piecesPerCycle ?? 1))),
       avgHoldingSec: average(doneUnits.map((unit) => departs[unit] - finishes[unit])),
       maxQueue,

@@ -155,3 +155,28 @@ test('ordem de produção: o lote de expedição atrasa a entrega, não o moment
   assert.equal(flow.order.deliveredSec, 300);
   assert.equal(flow.completed, 3);
 });
+
+test('peça pronta espera no estoque intermediário enquanto o próximo processo está ocupado, e o relatório conta essa espera', async () => {
+  const { buildLiveReport } = await import('../src/live-report.ts');
+  const stock = { id: 'stock', kind: 'inventory', x: 200, y: 0, label: 'Estoque', data: { qty: 0 } };
+  const arrow = (from, to) => ({ id: `${from}-${to}`, kind: 'arrow-push', x1: 0, y1: 0, x2: 1, y2: 1, startAnchor: { elementId: from, x: 1, y: 0.5 }, endAnchor: { elementId: to, x: 0, y: 0.5 } });
+  // "a" produz em 60 s; "b" leva 300 s: as peças de "a" ficam prontas antes de "b" desocupar.
+  const elements = [process('a', 0, 60), stock, process('b', 400, 300)];
+  const canvas = { elements, arrows: [arrow('a', 'stock'), arrow('stock', 'b')], assumptions, themeColor: '#0071e3' };
+  const simulation = calculateCanvasSimulation(canvas);
+  assert.equal(simulation.intermediateStocks[1]?.id, 'stock');
+  // Ordem de 4 peças: aos 400 s a 1ª está em "b" (começou aos 120 s) e as seguintes, prontas em "a", esperam no estoque.
+  const flow = calculateLiveFlow(simulation, assumptions, 400, { orderQuantity: 4 });
+  assert.equal(flow.stations[1].processing, 1);
+  assert.ok(flow.stations[1].stocked >= 2, `esperava peças no estoque, veio ${flow.stations[1].stocked}`);
+  assert.equal(flow.stations[1].waiting, 0);
+  // Ao concluir a ordem, a espera média antes de "b" aparece como espera no estoque, não como fila na entrada.
+  const done = calculateLiveFlow(simulation, assumptions, 4000, { orderQuantity: 4 });
+  const report = buildLiveReport(done, simulation, 4000);
+  const b = report.processes[1];
+  assert.equal(b.hasStock, true);
+  assert.ok(b.avgStockWaitSec > 0);
+  assert.equal(b.avgQueueSec, 0);
+  assert.ok(report.composition.stockWait > 0);
+  assert.equal(report.composition.queue, 0);
+});
