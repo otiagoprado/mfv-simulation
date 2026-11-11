@@ -39,6 +39,17 @@ function elementAt(elements: CanvasElement[], x: number, y: number) {
   return best?.element;
 }
 
+/** Âncora relativa (0–1) de um ponto do mapa dentro do elemento, limitada às bordas. */
+function anchorAt(element: CanvasElement, x: number, y: number) {
+  const box = boxOf(element);
+  const clamp = (value: number) => Math.min(1, Math.max(0, value));
+  return {
+    elementId: element.id,
+    x: clamp((x - box.left) / (box.right - box.left)),
+    y: clamp((y - box.top) / (box.bottom - box.top)),
+  };
+}
+
 /**
  * Setas desenhadas com a ponta solta sobre um elemento (sem âncora gravada) passam a contar como
  * ligadas a ele, para o fluxo seguir o que está desenhado.
@@ -51,8 +62,8 @@ export function resolveLooseArrowEnds(elements: CanvasElement[], arrows: CanvasA
     if (!start && !end) return arrow;
     return {
       ...arrow,
-      startAnchor: start ? { elementId: start.id, x: 0, y: 0 } : arrow.startAnchor,
-      endAnchor: end ? { elementId: end.id, x: 0, y: 0 } : arrow.endAnchor,
+      startAnchor: start ? anchorAt(start, arrow.x1, arrow.y1) : arrow.startAnchor,
+      endAnchor: end ? anchorAt(end, arrow.x2, arrow.y2) : arrow.endAnchor,
     };
   });
 }
