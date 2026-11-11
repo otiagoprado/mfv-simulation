@@ -178,5 +178,6 @@ test('peça pronta espera no estoque intermediário enquanto o próximo processo
   assert.ok(b.avgStockWaitSec > 0);
   assert.equal(b.avgQueueSec, 0);
   assert.ok(report.composition.stockWait > 0);
-  assert.equal(report.composition.queue, 0);
+  // A fila na entrada que resta é só a de "a" (todas liberadas no instante zero).
+  assert.equal(report.composition.queue, report.processes[0].avgQueueSec);
 });
