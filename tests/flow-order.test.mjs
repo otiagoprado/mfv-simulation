@@ -63,3 +63,32 @@ test('teste de estresse usa a ordem e os estoques ligados pelas setas', () => {
   assert.deepEqual(result.processResults.map((item) => item.id), ['cut', 'assembly']);
   assert.ok(result.processResults[1].maxQueue >= 100);
 });
+
+test('setas retas (inclusive as de informação em linha reta) contam como fluxo de material', () => {
+  const order = materialFlowOrder([process('b', 0), process('a', 300)], [arrow('a', 'b', 'arrow-info-manual-straight')]);
+  assert.deepEqual(ids(order), ['a', 'b']);
+  assert.equal(order.source, 'setas');
+});
+
+test('ponta solta de seta sobre um elemento conta como ligada a ele', () => {
+  const a = { ...process('a', 0), y: 0 };
+  const b = { ...process('b', 300), y: 0 };
+  // Processo tem 150 x 160: a ponta inicial (152, 80) está logo à direita de "a"; a final (298, 80), logo à esquerda de "b".
+  const loose = { id: 'loose', kind: 'arrow-straight', x1: 152, y1: 80, x2: 298, y2: 80 };
+  const order = materialFlowOrder([b, a], [loose]);
+  assert.deepEqual(ids(order), ['a', 'b']);
+  assert.equal(order.source, 'setas');
+});
+
+test('processos sem seta ficam depois dos ligados, na ordem da posição', () => {
+  const elements = [process('a', 0), process('b', 300), process('c', 600), { ...process('solto1', 150), y: 400 }, { ...process('solto2', 450), y: 400 }];
+  const order = materialFlowOrder(elements, [arrow('a', 'b'), arrow('b', 'c')]);
+  assert.deepEqual(ids(order), ['a', 'b', 'c', 'solto1', 'solto2']);
+  assert.equal(order.source, 'posicao');
+});
+
+test('setas que saem do controle da produção nunca são fluxo de material', () => {
+  const planning = { id: 'plan', kind: 'planning', x: 0, y: -300, label: 'Controle', data: {} };
+  const order = materialFlowOrder([process('b', 0), process('a', 300), planning], [arrow('plan', 'b', 'arrow-straight'), arrow('a', 'b')]);
+  assert.deepEqual(ids(order), ['a', 'b']);
+});
