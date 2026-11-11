@@ -260,10 +260,39 @@ export function calculateCanvasSimulation(canvas: CanvasState) {
   // Estoque intermediário antes de cada processo (ligado por setas entre ele e o anterior): a peça pronta
   // espera ali enquanto o processo seguinte ainda está ocupado. Sem estoque, espera na entrada do processo.
   const intermediateStockKinds: ElementKind[] = ['inventory', 'safety-stock', 'buffer', 'supermarket', 'fifo', 'warehouse', 'finished-goods'];
+  const stockCandidates = canvas.elements.filter((element) => intermediateStockKinds.includes(element.kind));
+  const centerOf = (element: CanvasElement) => {
+    const size = elementDimensions(element);
+    return { x: element.x + size.width / 2, y: element.y + size.height / 2 };
+  };
+  const claimedStocks = new Set<string>();
   const intermediateStocks: (CanvasElement | null)[] = processElements.map((process, index) => {
     if (index === 0) return null;
-    const between = flowOrder.between.get(processElements[index - 1].id) ?? [];
-    return between.find((element) => intermediateStockKinds.includes(element.kind)) ?? null;
+    const previous = processElements[index - 1];
+    const between = flowOrder.between.get(previous.id) ?? [];
+    const onPath = between.find((element) => intermediateStockKinds.includes(element.kind));
+    if (onPath) { claimedStocks.add(onPath.id); return onPath; }
+    // Sem seta passando pelo estoque: vale o estoque desenhado entre os dois processos (na mesma faixa).
+    const from = centerOf(previous);
+    const to = centerOf(process);
+    const spanX = Math.abs(to.x - from.x);
+    const spanY = Math.abs(to.y - from.y);
+    const candidates = stockCandidates.filter((element) => {
+      if (claimedStocks.has(element.id)) return false;
+      const center = centerOf(element);
+      const insideX = center.x > Math.min(from.x, to.x) - 20 && center.x < Math.max(from.x, to.x) + 20;
+      const insideY = center.y > Math.min(from.y, to.y) - 20 && center.y < Math.max(from.y, to.y) + 20;
+      const nearRow = spanY < 40 ? Math.abs(center.y - from.y) < 220 : insideY;
+      const nearColumn = spanX < 40 ? Math.abs(center.x - from.x) < 220 : insideX;
+      return nearRow && nearColumn && (spanX >= 40 || spanY >= 40);
+    });
+    const midpoint = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const nearest = candidates.sort((a, b) => {
+      const ca = centerOf(a); const cb = centerOf(b);
+      return Math.hypot(ca.x - midpoint.x, ca.y - midpoint.y) - Math.hypot(cb.x - midpoint.x, cb.y - midpoint.y);
+    })[0] ?? null;
+    if (nearest) claimedStocks.add(nearest.id);
+    return nearest;
   });
   let cumulativeYield = 1;
   const processMetrics = [...processElements].reverse().map((element) => {
