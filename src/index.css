@@ -316,6 +316,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .live-process-halo.critical { stroke: #ff3b30; filter: drop-shadow(0 0 6px rgba(255,59,48,.55)); }
 .live-product-token { filter: drop-shadow(0 2px 4px rgba(0,0,0,.28)); transition: opacity .18s ease; }
 .live-product-token.inside-truck { opacity: .2; }
+.live-operator { filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
+.live-operator.walking { animation: operator-step .5s ease-in-out infinite alternate; }
+@keyframes operator-step { from { transform-box: fill-box; } to { transform-box: fill-box; } }
 .live-truck-loading { fill: rgba(40,183,108,.08); stroke: #28b76c; stroke-width: 4; stroke-dasharray: 9 5; filter: drop-shadow(0 0 7px rgba(40,183,108,.45)); }
 .live-bottleneck-help { filter: drop-shadow(0 8px 16px rgba(35,20,18,.16)); }
 .scenario-toolbar {

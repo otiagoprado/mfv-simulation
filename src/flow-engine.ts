@@ -564,6 +564,10 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
     const depart: number[][] = [];
     stations.forEach((station, stationIndex) => {
       const previous = stationIndex === 0 ? release : depart[stationIndex - 1];
+      // Com estoque intermediário antes do processo, a peça pronta espera no estoque e a movimentação
+      // só começa quando o processo desocupa: ele fica parado durante o transporte. Sem estoque, a peça
+      // segue direto e espera na entrada.
+      const waitsInStock = stationIndex > 0 && Boolean(simulation.intermediateStocks[stationIndex]);
       const stationArrival = previous.map((time) => time + LIVE_TRANSIT_SEC);
       const stationStart = units.map(() => Infinity);
       const stationFinish = units.map(() => Infinity);
@@ -573,17 +577,25 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
       // encher e produz todas ao mesmo tempo. Com 1 peça por ciclo é o fluxo peça a peça.
       // O setup por lote entra no ciclo que começa um lote novo.
       let next = 0;
-      while (next < units.length && Number.isFinite(stationArrival[next])) {
+      while (next < units.length && Number.isFinite(previous[next])) {
         const members: number[] = [];
-        while (members.length < station.piecesPerCycle && next < units.length && Number.isFinite(stationArrival[next])) {
+        while (members.length < station.piecesPerCycle && next < units.length && Number.isFinite(previous[next])) {
           members.push(next);
           next += 1;
         }
         // Ciclo incompleto (as demais peças ainda não foram liberadas) fica esperando na entrada.
         if (members.length < station.piecesPerCycle && !(closesPartialGroups && next === units.length)) break;
-        const ready = Math.max(...members.map((unit) => stationArrival[unit]));
         const setup = station.batchMode && members.some((unit) => unit % station.batchSize === 0) ? station.setupSec : 0;
-        const start = Math.max(ready, freeAt);
+        let start: number;
+        if (waitsInStock) {
+          const readyInStock = Math.max(...members.map((unit) => previous[unit]));
+          start = Math.max(readyInStock, freeAt) + LIVE_TRANSIT_SEC;
+          // A peça chega na hora de começar: nada fica na entrada.
+          members.forEach((unit) => { stationArrival[unit] = start; });
+        } else {
+          const ready = Math.max(...members.map((unit) => stationArrival[unit]));
+          start = Math.max(ready, freeAt);
+        }
         const finish = start + setup + station.cycleSec;
         members.forEach((unit) => {
           stationStart[unit] = start;
@@ -636,11 +648,12 @@ export function calculateLiveFlow(simulation: ReturnType<typeof calculateCanvasS
   const launchedUnits = units.map((_, unit) => unit).filter((unit) => release[unit] <= elapsedSec);
   const launchedBatches = demandedBatches.filter((batch) => units.some((candidate, unit) => candidate === batch && release[unit] <= elapsedSec));
   const stationStates: LiveStationState[] = stations.map((station) => ({ id: station.id, stocked: 0, waiting: 0, processing: 0, holding: 0 }));
-  // Espera no estoque intermediário: a peça pronta só sai do estoque quando o processo seguinte vai
-  // desocupar, chegando nele na hora de começar. O tempo total até começar não muda; muda onde ela espera.
+  // Espera no estoque intermediário: a peça pronta fica no estoque até o processo seguinte desocupar;
+  // só então é movimentada (LIVE_TRANSIT_SEC) e começa a ser produzida ao chegar.
   const stockWaitSec = (station: number, unit: number) => {
     if (station === 0 || !simulation.intermediateStocks[station]) return 0;
-    return Math.max(0, timeline.start[station][unit] - timeline.arrival[station][unit]);
+    const leftAt = timeline.depart[station - 1][unit];
+    return Math.max(0, timeline.start[station][unit] - LIVE_TRANSIT_SEC - leftAt);
   };
   const liveUnits: LiveUnit[] = [];
   let completed = 0;

@@ -1,6 +1,6 @@
 // Relatório da simulação ao vivo: resume a linha do tempo peça a peça em indicadores,
 // composição do tempo de cada unidade, carga por processo e séries para os gráficos.
-import type { calculateCanvasSimulation, calculateLiveFlow } from './flow-engine.ts';
+import { LIVE_TRANSIT_SEC, type calculateCanvasSimulation, type calculateLiveFlow } from './flow-engine.ts';
 
 type LiveFlow = ReturnType<typeof calculateLiveFlow>;
 type Simulation = ReturnType<typeof calculateCanvasSimulation>;
@@ -73,9 +73,14 @@ export function buildLiveReport(flow: LiveFlow, simulation: Simulation, elapsedS
   readyUnits.forEach((unit) => {
     stations.forEach((_, station) => {
       const leftPrevious = station === 0 ? release[unit] : timeline.depart[station - 1][unit];
-      composition.transit += timeline.arrival[station][unit] - leftPrevious;
-      const waitSec = timeline.start[station][unit] - timeline.arrival[station][unit];
-      if (hasStockBefore(station)) composition.stockWait += waitSec; else composition.queue += waitSec;
+      if (hasStockBefore(station)) {
+        // Com estoque: espera no estoque até o processo desocupar, depois a movimentação, e começa ao chegar.
+        composition.stockWait += Math.max(0, timeline.start[station][unit] - LIVE_TRANSIT_SEC - leftPrevious);
+        composition.transit += LIVE_TRANSIT_SEC;
+      } else {
+        composition.transit += timeline.arrival[station][unit] - leftPrevious;
+        composition.queue += timeline.start[station][unit] - timeline.arrival[station][unit];
+      }
       composition.processing += timeline.finish[station][unit] - timeline.start[station][unit];
       composition.holding += timeline.depart[station][unit] - timeline.finish[station][unit];
     });
@@ -131,7 +136,9 @@ export function buildLiveReport(flow: LiveFlow, simulation: Simulation, elapsedS
       busySec,
       utilization: elapsedSec > 0 ? Math.min(1, busySec / elapsedSec) : 0,
       hasStock: hasStockBefore(station),
-      avgStockWaitSec: hasStockBefore(station) ? average(doneUnits.map((unit) => starts[unit] - arrivals[unit])) : 0,
+      avgStockWaitSec: hasStockBefore(station)
+        ? average(doneUnits.map((unit) => Math.max(0, starts[unit] - LIVE_TRANSIT_SEC - timeline.depart[station - 1][unit])))
+        : 0,
       avgQueueSec: hasStockBefore(station) ? 0 : average(doneUnits.map((unit) => starts[unit] - arrivals[unit])),
       avgProcessSec: average(doneUnits.map((unit) => (finishes[unit] - starts[unit]) / Math.max(1, spec?.piecesPerCycle ?? 1))),
       avgHoldingSec: average(doneUnits.map((unit) => departs[unit] - finishes[unit])),

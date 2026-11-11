@@ -1473,9 +1473,24 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
       scale = 0.55;
     }
     const truck = stage.kind === 'transit' ? truckCenters.find((center) => Math.hypot(point.x - center.x, point.y - center.y) < 58) : undefined;
-    return [{ index: unit.index, packIndex: unit.packIndex, product: unit.product, point, scale, moving: stage.kind === 'transit', processing: stage.kind === 'processing', truckId: truck?.id }];
+    // Em trânsito, `fromStation` é o processo que acabou de entregar a peça (-1 = matéria-prima).
+    const fromStation = stage.kind === 'transit' ? stage.station - 1 : null;
+    return [{ index: unit.index, packIndex: unit.packIndex, product: unit.product, point, scale, moving: stage.kind === 'transit', processing: stage.kind === 'processing', truckId: truck?.id, fromStation }];
   });
   const loadingTruckIds = new Set(tokens.map((token) => token.truckId).filter(Boolean));
+  // Operadores: um boneco por operador do processo, parado ao lado da máquina; ao terminar a peça,
+  // o primeiro caminha com ela até o processo seguinte (ou a expedição) para entregá-la.
+  const operators = stationBoxes.flatMap((box, station) => {
+    const count = Math.min(4, Math.max(1, Math.round(Number(simulation.processMetrics[station]?.element.data.op) || 1)));
+    const delivering = tokens.filter((token) => token.moving && token.fromStation === station && !token.truckId);
+    return Array.from({ length: count }, (_, index) => {
+      const carrying = delivering[index];
+      const idle = { x: box.right + 16 + index * 16, y: box.bottom - 2 };
+      return carrying
+        ? { id: `${station}-${index}`, x: carrying.point.x - 12, y: carrying.point.y + 16, walking: true }
+        : { id: `${station}-${index}`, x: idle.x, y: idle.y, walking: false };
+    });
+  });
   const bottleneckMetric = simulation.processMetrics.find((metric) => metric.element.id === simulation.bottleneck?.id);
   const guidance = bottleneckMetric?.overloaded ? bottleneckGuidance(bottleneckMetric, canvas.assumptions) : null;
 
@@ -1558,6 +1573,19 @@ function LiveFlowOverlay({ canvas, simulation, elapsedSec, orderQuantity = 0 }: 
         <path d="M13,-7 V8 L0,14 V-1 Z" fill={token.product?.color ?? '#dcecff'} fillOpacity={0.22} stroke="#23415a" strokeWidth={1.2}/>
         <path d="M0,-13 V-1" stroke="#23415a" strokeWidth={1}/>
         {token.moving && <text x={0} y={-18} textAnchor="middle" fontSize={7} fontWeight="800" fontFamily="Arial" fill="#34383e">{token.product?.code ?? 'P1'} · CX {token.packIndex + 1}</text>}
+      </g>)}
+      {/* Bonecos dos operadores: os pés ficam em (x, y); quem entrega caminha junto da peça. */}
+      {operators.map((operator) => <g key={`operator-${operator.id}`} transform={`translate(${operator.x},${operator.y}) scale(0.5)`} className={`live-operator ${operator.walking ? 'walking' : ''}`}>
+        <circle cx={0} cy={-46} r={7} fill="#f2c9a5" stroke="#23415a" strokeWidth={1.4} />
+        <path d="M-8,-47 Q-8,-55 0,-56 Q8,-55 8,-47 H5 Q4,-51 0,-51 Q-4,-51 -5,-47 Z" fill="#f2b84b" stroke="#9a6508" strokeWidth={1} />
+        <rect x={-10} y={-38} width={20} height={23} rx={7} fill={canvas.themeColor} stroke="#23415a" strokeWidth={1.4} />
+        {operator.walking
+          ? <path d="M-9,-34 L-20,-24 M9,-34 L20,-24" fill="none" stroke="#23415a" strokeWidth={3.4} strokeLinecap="round" />
+          : <path d="M-9,-33 L-16,-21 M9,-33 L16,-21" fill="none" stroke="#23415a" strokeWidth={3.4} strokeLinecap="round" />}
+        {operator.walking
+          ? <path d="M-4,-16 L-13,-2 M4,-16 L13,-2" fill="none" stroke="#1d2b3a" strokeWidth={3.8} strokeLinecap="round" />
+          : <path d="M-4,-16 L-6,-2 M4,-16 L6,-2" fill="none" stroke="#1d2b3a" strokeWidth={3.8} strokeLinecap="round" />}
+        <path d={operator.walking ? 'M-17,-2 H-9 M9,-2 H17' : 'M-10,-2 H-2 M2,-2 H10'} stroke="#303640" strokeWidth={3} strokeLinecap="round" />
       </g>)}
       {/* Contadores das bandejas por cima das peças, acima da pilha, para não ficarem escondidos. */}
       {stationBoxes.map((box, station) => {
